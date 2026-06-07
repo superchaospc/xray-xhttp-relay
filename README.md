@@ -12,7 +12,7 @@
 [![Repo Size](https://img.shields.io/github/repo-size/superchaospc/xray-xhttp-relay?style=flat-square)](https://github.com/superchaospc/xray-xhttp-relay)
 [![Code Size](https://img.shields.io/github/languages/code-size/superchaospc/xray-xhttp-relay?style=flat-square)](https://github.com/superchaospc/xray-xhttp-relay)
 [![Last Commit](https://img.shields.io/github/last-commit/superchaospc/xray-xhttp-relay?style=flat-square)](https://github.com/superchaospc/xray-xhttp-relay/commits/main)
-![Tests](https://img.shields.io/badge/tests-31%20passing-brightgreen?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-32%20passing-brightgreen?style=flat-square)
 ![Shell](https://img.shields.io/badge/shell-Bash-4EAA25?style=flat-square&logo=gnubash&logoColor=white)
 ![Platform](https://img.shields.io/badge/platform-Linux-FCC624?style=flat-square&logo=linux&logoColor=black)
 ![Xray](https://img.shields.io/badge/Xray-%E2%89%A524.10.31-2F6FED?style=flat-square)
@@ -46,6 +46,14 @@ VPS 上一键部署 **Xray VLESS + XHTTP + REALITY** 的 Bash 脚本。每个节
 - 🚨 **监控报警**：可选配置邮件告警（Gmail/QQ/163 等 SMTP），每分钟巡检，异常自动发信
 - 📱 **终端二维码**：节点生成后直接在终端渲染 VLESS 二维码；支持 XHTTP 参数导入的客户端可扫码使用
 - 🐧 **多发行版支持**：Debian / Ubuntu / CentOS / AlmaLinux / Rocky / Fedora
+
+---
+
+## 🆕 v1.0.1 IPv6 自动回退
+
+- 公网 IP 检测优先尝试 IPv4，失败后自动回退到 IPv6，仍获取不到才要求手动输入
+- IPv6 地址在 VLESS 链接中继续由 `format_vless_host` 自动加方括号包裹
+- 新增 `test_get_ip_ipv6_fallback.sh`，覆盖 IPv4 不可用、IPv6 可用时的自动检测与缓存
 
 ---
 
@@ -540,6 +548,7 @@ bash run_all_tests.sh
 - `test_prompt_read_eof.sh`：交互提示在 stdin EOF 时优雅退出
 - `test_prompt_read_trim.sh`：交互输入自动修剪首尾空白
 - `test_get_ip_eof.sh`：公网 IP 获取在 EOF 场景下返回失败
+- `test_get_ip_ipv6_fallback.sh`：IPv4 获取失败时自动回退到 IPv6 并缓存
 - `test_next_port.sh`：入站端口计算，包括端口耗尽时返回非 0
 - `test_public_key_and_ports.sh`：public key 派生失败、业务端口过滤与端口修改链接备注
 - `test_xhttp_helpers.sh`：XHTTP 模式、路径和分享链接编码

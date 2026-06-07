@@ -4,6 +4,10 @@
 #  By Wayne Shen
 #  Derived from superchaospc/xray-relay (MIT License)
 #
+#  v1.0.1 修复：
+#    - 公网 IP 检测在 IPv4 不可用时自动回退到 IPv6
+#    - IPv4 和 IPv6 都不可用时才提示手动输入
+#
 #  v1.0.0 首发版本（基于 xray-relay v2.2.20）：
 #    - 所有管理的 VLESS 入站从 RAW/TCP + XTLS-Vision + REALITY
 #      迁移至 XHTTP + REALITY（每节点独立随机路径，支持 mode=auto/stream-one/stream-up/packet-up）
@@ -175,7 +179,7 @@ _QRENCODE_CHECKED=""
 print_banner() {
     echo -e "${CYAN}"
     echo "╔═══════════════════════════════════════════════╗"
-    echo "║   Xray XHTTP Reality 中转部署工具 v1.0.0     ║"
+    echo "║   Xray XHTTP Reality 中转部署工具 v1.0.1     ║"
     echo "║   多节点 · 一键部署 · 配置自动回滚           ║"
     echo "╚═══════════════════════════════════════════════╝"
     echo -e "${NC}"
@@ -232,13 +236,17 @@ get_ip() {
         fi
     fi
 
-    local IP="" candidate provider
-    for provider in ip.sb ifconfig.me icanhazip.com; do
-        candidate=$(curl -s4 --max-time 5 "$provider" 2>/dev/null || true)
-        if is_valid_ip_literal "$candidate"; then
-            IP="$candidate"
-            break
-        fi
+    local IP="" candidate provider ipflag
+    # 先尝试 IPv4，失败后自动回退到 IPv6，最后才要求手动输入。
+    for ipflag in -s4 -s6; do
+        for provider in ip.sb ifconfig.me icanhazip.com; do
+            candidate=$(curl "$ipflag" --max-time 5 "$provider" 2>/dev/null || true)
+            if is_valid_ip_literal "$candidate"; then
+                IP="$candidate"
+                break
+            fi
+        done
+        [ -n "$IP" ] && break
     done
     if [ -z "$IP" ]; then
         echo -e "${RED}无法获取本机公网 IP，请手动输入:${NC}" >&2
