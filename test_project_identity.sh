@@ -43,4 +43,11 @@ grep -q "备份" "$ROOT/README.md" \
 grep -qE "将被.*替换|将.*覆盖|会.*覆盖|将被新配置" "$ROOT/README.md" \
     || fail "README.md 迁移警告未明确说明 config.json 将被替换"
 
+# ---- 客户端兼容提示：不得宣称 NekoBox / NekoRay 可直接扫码使用 ----
+if grep -qiE "Neko(Box|Ray)|Neobox" "$ROOT/xray_deploy.sh"; then
+    fail "xray_deploy.sh 不应宣称 NekoBox / NekoRay 支持 XHTTP 二维码"
+fi
+grep -q "支持 XHTTP + REALITY 的客户端" "$ROOT/xray_deploy.sh" \
+    || fail "xray_deploy.sh 缺少通用 XHTTP + REALITY 客户端提示"
+
 echo "project identity ok"

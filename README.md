@@ -2,12 +2,20 @@
 
 > One-click Xray VLESS+XHTTP+REALITY deployment with residential SOCKS5 multi-hop relay support
 
-![GitHub repo size](https://img.shields.io/github/repo-size/superchaospc/xray-xhttp-relay?style=flat-square)
-![GitHub last commit](https://img.shields.io/github/last-commit/superchaospc/xray-xhttp-relay?style=flat-square)
-![GitHub License](https://img.shields.io/github/license/superchaospc/xray-xhttp-relay?style=flat-square)
-![Shell Script](https://img.shields.io/badge/Shell-Bash-4EAA25?style=flat-square&logo=gnu-bash&logoColor=white)
-![Platform](https://img.shields.io/badge/Platform-Linux-FCC624?style=flat-square&logo=linux&logoColor=black)
-![Xray](https://img.shields.io/badge/Core-Xray%20%E2%89%A524.10.31-2F6FED?style=flat-square)
+[![GitHub Release](https://img.shields.io/github/v/release/superchaospc/xray-xhttp-relay?style=flat-square&logo=github)](https://github.com/superchaospc/xray-xhttp-relay/releases/latest)
+[![Release Date](https://img.shields.io/github/release-date/superchaospc/xray-xhttp-relay?style=flat-square)](https://github.com/superchaospc/xray-xhttp-relay/releases)
+[![Downloads](https://img.shields.io/github/downloads/superchaospc/xray-xhttp-relay/total?style=flat-square&logo=github)](https://github.com/superchaospc/xray-xhttp-relay/releases)
+[![Stars](https://img.shields.io/github/stars/superchaospc/xray-xhttp-relay?style=flat-square&logo=github)](https://github.com/superchaospc/xray-xhttp-relay/stargazers)
+[![Forks](https://img.shields.io/github/forks/superchaospc/xray-xhttp-relay?style=flat-square&logo=github)](https://github.com/superchaospc/xray-xhttp-relay/forks)
+[![Issues](https://img.shields.io/github/issues/superchaospc/xray-xhttp-relay?style=flat-square&logo=github)](https://github.com/superchaospc/xray-xhttp-relay/issues)
+[![License](https://img.shields.io/github/license/superchaospc/xray-xhttp-relay?style=flat-square)](LICENSE)
+[![Repo Size](https://img.shields.io/github/repo-size/superchaospc/xray-xhttp-relay?style=flat-square)](https://github.com/superchaospc/xray-xhttp-relay)
+[![Code Size](https://img.shields.io/github/languages/code-size/superchaospc/xray-xhttp-relay?style=flat-square)](https://github.com/superchaospc/xray-xhttp-relay)
+[![Last Commit](https://img.shields.io/github/last-commit/superchaospc/xray-xhttp-relay?style=flat-square)](https://github.com/superchaospc/xray-xhttp-relay/commits/main)
+![Tests](https://img.shields.io/badge/tests-31%20passing-brightgreen?style=flat-square)
+![Shell](https://img.shields.io/badge/shell-Bash-4EAA25?style=flat-square&logo=gnubash&logoColor=white)
+![Platform](https://img.shields.io/badge/platform-Linux-FCC624?style=flat-square&logo=linux&logoColor=black)
+![Xray](https://img.shields.io/badge/Xray-%E2%89%A524.10.31-2F6FED?style=flat-square)
 
 VPS 上一键部署 **Xray VLESS + XHTTP + REALITY** 的 Bash 脚本。每个节点使用独立随机 XHTTP 路径（支持 `XHTTP_MODE=auto/stream-one/stream-up/packet-up`）。既支持 **VPS 直连线路**，也支持 **VPS 入口 → 住宅 SOCKS5 出口** 的中转线路；支持单条添加、批量生成住宅 SOCKS5 中转节点、批量生成 VPS 直连节点、固定端口→节点映射、配置自动校验回滚、流量统计、监控报警，以及生成 VLESS 链接、订阅和终端二维码。客户端必须支持 XHTTP，并正确保留 `type=xhttp`、`path` 与 `mode` 参数。
 
@@ -38,6 +46,25 @@ VPS 上一键部署 **Xray VLESS + XHTTP + REALITY** 的 Bash 脚本。每个节
 - 🚨 **监控报警**：可选配置邮件告警（Gmail/QQ/163 等 SMTP），每分钟巡检，异常自动发信
 - 📱 **终端二维码**：节点生成后直接在终端渲染 VLESS 二维码；支持 XHTTP 参数导入的客户端可扫码使用
 - 🐧 **多发行版支持**：Debian / Ubuntu / CentOS / AlmaLinux / Rocky / Fedora
+
+---
+
+## 🆕 v1.0.0 首发
+
+- 将上游 `xray-relay` v2.2.20 的所有 VLESS 入站迁移为 **XHTTP + REALITY**
+- 每个节点使用独立随机 XHTTP 路径，支持 `auto`、`stream-one`、`stream-up`、`packet-up`
+- 保留原项目全部 16 项菜单、住宅 SOCKS5 中转、VPS 直连、批量管理、流量统计、监控、防火墙与配置回滚
+- 生成带 `type=xhttp`、`path`、`mode` 的 VLESS 链接、订阅和终端二维码
+- 诊断日志只统计当前 Xray 服务成功启动后的错误，避免安装期历史日志误报
+- 要求 Xray core ≥ 24.10.31；已使用 Xray 26.3.27 做真实配置与代理链路验证
+
+### 真实 VPS 验证
+
+已在 Debian 11 测试机完成：全新安装、443 直连节点、批量添加 8443/8444 直连节点、节点改名、状态、流量页面、诊断、重启、真实 Xray 配置校验，以及三个节点的本机端到端 XHTTP+REALITY 代理测试。
+
+住宅 SOCKS5 出口、邮件监控、删除节点和卸载仍以自动化测试覆盖为主，尚未在该测试机执行完整实机流程。
+
+> 以下 `v2.2.x` 记录继承自上游 `xray-relay`，用于保留原项目功能演进历史。
 
 ---
 
@@ -378,7 +405,14 @@ curl -fsSL https://raw.githubusercontent.com/superchaospc/xray-xhttp-relay/main/
 
 脚本在每个节点生成完毕后会自动打印二维码。导入前请确认客户端当前版本明确支持 **XHTTP + REALITY**；仅支持 REALITY、但不识别 XHTTP 的版本无法使用这些节点。GUI 导入后还应检查 `type=xhttp`、`path` 和 `mode` 是否完整保留。
 
-常见 Xray 系客户端通常提供扫码或剪贴板导入入口，但不同版本的 XHTTP 支持进度可能不同。若 GUI 丢失参数，请升级客户端或手动导入 JSON 配置，不要仅凭“扫码成功”判断兼容。
+| 客户端 | 建议 | 说明 |
+| --- | --- | --- |
+| [Shadowrocket](https://apps.apple.com/app/shadowrocket/id932747118) | 推荐使用当前版本 | 导入后检查 XHTTP 类型、路径和模式是否保留 |
+| [v2rayN](https://github.com/2dust/v2rayN/releases/latest) | 推荐使用当前版本 | Windows / Linux / macOS，需选择带 Xray core 的配置 |
+| [v2rayNG](https://github.com/2dust/v2rayNG/releases/latest) | 推荐使用当前版本 | Android，旧版本可能无法完整识别 XHTTP 参数 |
+| NekoBox / NekoRay | 不推荐用于本配置 | 不同分支和版本的 XHTTP 支持不一致，可能扫码成功但无法连接 |
+
+客户端支持会随版本变化。若 GUI 丢失参数，请升级客户端或手动导入 JSON 配置，不要仅凭“扫码成功”判断兼容。
 
 > 💡 扫码成功率与终端背景相关。白底或纯色主题最佳，避免透明/渐变背景。
 

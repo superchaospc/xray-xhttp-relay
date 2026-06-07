@@ -296,7 +296,7 @@ show_qrcode() {
 
     echo ""
     echo -e "${GREEN}┌─ 扫码导入 [${name}] ──────────────────────────${NC}"
-    echo -e "${CYAN}  Shadowrocket / V2rayN / Neobox / V2rayNG 均可扫码${NC}"
+    echo -e "${CYAN}  请使用支持 XHTTP + REALITY 的客户端扫码${NC}"
     echo ""
     qrencode -t ANSIUTF8 -m 2 "$link" || {
         echo -e "${RED}  二维码生成失败${NC}"
