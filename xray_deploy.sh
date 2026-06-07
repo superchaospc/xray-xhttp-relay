@@ -3918,6 +3918,19 @@ PYEOF
     fi
 }
 
+xray_journal_since() {
+    local started_at
+    started_at=$(systemctl show xray -p ExecMainStartTimestamp --value 2>/dev/null | head -n1 || true)
+    case "$started_at" in
+        ""|"n/a")
+            printf '%s\n' "1 hour ago"
+            ;;
+        *)
+            printf '%s\n' "$started_at"
+            ;;
+    esac
+}
+
 troubleshoot() {
     echo -e "${CYAN}╔═══════════════════════════════════════════════╗${NC}"
     echo -e "${CYAN}║              排错诊断                         ║${NC}"
@@ -4063,13 +4076,14 @@ PYEOF
 
     echo ""
     echo -e "${GREEN}[8/8] 最近错误日志${NC}"
-    RECENT=$(journalctl -u xray --since "1 hour ago" --no-pager 2>/dev/null | grep -i -E "error|fail|refused" | tail -5)
+    JOURNAL_SINCE=$(xray_journal_since)
+    RECENT=$(journalctl -u xray --since "$JOURNAL_SINCE" --no-pager 2>/dev/null | grep -i -E "error|fail|refused" | tail -5)
     if [ -n "$RECENT" ]; then
         echo -e "  ${YELLOW}发现错误:${NC}"
         echo "$RECENT" | sed 's/^/    /'
         ERRORS=$((ERRORS+1))
     else
-        echo -e "  ${GREEN}✓ 最近1小时无错误${NC}"
+        echo -e "  ${GREEN}✓ 当前服务启动后无错误${NC}"
     fi
 
     echo ""

@@ -513,6 +513,7 @@ bash run_all_tests.sh
 - `test_xray_version.sh`：XHTTP 最低 Xray 版本解析与诊断
 - `test_project_identity.sh`：仓库身份、16 项菜单与迁移警告
 - `test_xray_real_config.sh`：使用本机真实 Xray 校验最小 XHTTP + REALITY 配置
+- `test_diagnostic_journal_window.sh`：诊断日志仅扫描当前服务成功启动后的时间窗口
 - `test_atomic_config.sh`：配置原子写入与回滚流程
 - `test_restart_rollback_permissions.sh`：重启失败回滚后恢复 `config.json` 权限
 - `test_info_parse.sh`：节点信息解析
@@ -533,7 +534,7 @@ bash run_all_tests.sh
 当前测试结果：
 
 ```text
-通过: 30  失败: 0  跳过: 0
+通过: 31  失败: 0  跳过: 0
 ```
 
 如果系统未安装 `shellcheck`，静态检查会自动跳过该项。
