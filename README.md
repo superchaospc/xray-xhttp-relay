@@ -299,7 +299,7 @@ CLIENT_FP=ios REALITY_SERVER_NAME=www.apple.com REALITY_DEST=www.apple.com:443 /
 
 ## ⚡ 快速开始
 
-> 🎉 **最新版本：[v1.0.0](https://github.com/superchaospc/xray-xhttp-relay/releases/tag/v1.0.0)** — 基于 xray-relay v2.2.20，所有 VLESS 入站从 TCP+XTLS-Vision 迁移至 XHTTP+REALITY。下面的命令默认拉取 `main` 分支。
+> 首个 XHTTP 版本基于 xray-relay v2.2.20，将所有 VLESS 入站从 TCP+XTLS-Vision 迁移至 XHTTP+REALITY。下面的命令拉取 `main` 分支。
 >
 > ⚠️ **要求 Xray ≥ 24.10.31**。首次运行时脚本会检查版本；若版本过低请先用菜单 `8) 更新 Xray` 升级。
 
@@ -307,14 +307,6 @@ CLIENT_FP=ios REALITY_SERVER_NAME=www.apple.com REALITY_DEST=www.apple.com:443 /
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/superchaospc/xray-xhttp-relay/main/xray_deploy.sh -o /root/xray_deploy.sh
-chmod +x /root/xray_deploy.sh
-/root/xray_deploy.sh
-```
-
-如需锁定到固定版本（可复现），把 URL 里的 `main` 换成对应 tag，例如 `v1.0.0`：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/superchaospc/xray-xhttp-relay/v1.0.0/xray_deploy.sh -o /root/xray_deploy.sh
 chmod +x /root/xray_deploy.sh
 /root/xray_deploy.sh
 ```
