@@ -14,19 +14,19 @@ cat > "$INFO_FILE" << 'EOF'
 === LA-CMIN2 ===
 端口: 443
 出口: VPS 直连 (38.47.118.82)
-链接: vless://abc-uuid@38.47.118.82:443?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.cloudflare.com&fp=chrome&pbk=PUBKEY&sid=SID&type=tcp#LA-CMIN2
+链接: vless://abc-uuid@38.47.118.82:443?encryption=none&security=reality&sni=www.cloudflare.com&fp=chrome&pbk=PUBKEY&sid=SID&type=xhttp&path=%2FaA1bB2cC3&mode=auto#LA-CMIN2
 
 
 === US-Residential ===
 端口: 8444
 落地: 161.77.77.5:12324
-链接: vless://abc-uuid@38.47.118.82:8444?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.cloudflare.com&fp=chrome&pbk=PUBKEY&sid=SID&type=tcp#US-Residential
+链接: vless://abc-uuid@38.47.118.82:8444?encryption=none&security=reality&sni=www.cloudflare.com&fp=chrome&pbk=PUBKEY&sid=SID&type=xhttp&path=%2FdD4eE5fF6&mode=stream-one#US-Residential
 
 
 === JP-Direct ===
 端口: 8445
 出口: VPS 直连 (38.47.118.82)
-链接: vless://abc-uuid@38.47.118.82:8445?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.cloudflare.com&fp=chrome&pbk=PUBKEY&sid=SID&type=tcp#JP-Direct
+链接: vless://abc-uuid@38.47.118.82:8445?encryption=none&security=reality&sni=www.cloudflare.com&fp=chrome&pbk=PUBKEY&sid=SID&type=xhttp&path=%2FgG7hH8iI9&mode=auto#JP-Direct
 
 EOF
 
@@ -74,6 +74,27 @@ for i in "${!names[@]}"; do
     fragment="${link##*#}"
     if [ "$fragment" != "$expected" ]; then
         echo "✗ 节点 $i 的链接 fragment ($fragment) 与名称 ($expected) 不符"
+        exit 1
+    fi
+done
+
+# 所有链接必须是 XHTTP 类型，不含 TCP 或 Vision 字段
+for i in "${!links[@]}"; do
+    link="${links[$i]}"
+    if [[ "$link" != *"type=xhttp"* ]]; then
+        echo "✗ 节点 $i 链接缺少 type=xhttp: $link"
+        exit 1
+    fi
+    if [[ "$link" == *"type=tcp"* ]] || [[ "$link" == *"flow="* ]]; then
+        echo "✗ 节点 $i 链接含有遗留 TCP/Vision 字段: $link"
+        exit 1
+    fi
+    if [[ "$link" != *"path="* ]]; then
+        echo "✗ 节点 $i 链接缺少 path 参数: $link"
+        exit 1
+    fi
+    if [[ "$link" != *"mode="* ]]; then
+        echo "✗ 节点 $i 链接缺少 mode 参数: $link"
         exit 1
     fi
 done

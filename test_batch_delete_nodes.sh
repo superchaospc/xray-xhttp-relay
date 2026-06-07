@@ -1,5 +1,6 @@
 #!/bin/bash
 # 验证批量删除节点支持逗号/范围选择，并只移除不再被引用的 outbound。
+# 同时验证删除节点的 XHTTP inbound/path 被移除，保留节点的 path 不变。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -22,10 +23,22 @@ cat > "$CONFIG_FILE" <<'JSON'
 {
   "inbounds": [
     {"tag": "api-in", "port": 10085},
-    {"tag": "vless-in-1", "port": 443, "_remark": "LA-Direct"},
-    {"tag": "vless-in-2", "port": 8444, "_remark": "JP-Residential"},
-    {"tag": "vless-in-3", "port": 8445, "_remark": "US-Residential"},
-    {"tag": "vless-in-4", "port": 8446, "_remark": "SG-Residential"}
+    {
+      "tag": "vless-in-1", "port": 443, "_remark": "LA-Direct",
+      "streamSettings": {"xhttpSettings": {"path": "/pathAAA", "mode": "auto"}}
+    },
+    {
+      "tag": "vless-in-2", "port": 8444, "_remark": "JP-Residential",
+      "streamSettings": {"xhttpSettings": {"path": "/pathBBB", "mode": "stream-one"}}
+    },
+    {
+      "tag": "vless-in-3", "port": 8445, "_remark": "US-Residential",
+      "streamSettings": {"xhttpSettings": {"path": "/pathCCC", "mode": "auto"}}
+    },
+    {
+      "tag": "vless-in-4", "port": 8446, "_remark": "SG-Residential",
+      "streamSettings": {"xhttpSettings": {"path": "/pathDDD", "mode": "packet-up"}}
+    }
   ],
   "outbounds": [
     {"tag": "direct", "protocol": "freedom"},
@@ -66,6 +79,19 @@ rules = config["routing"]["rules"]
 assert rules == [
     {"type": "field", "inboundTag": ["vless-in-4"], "outboundTag": "socks5-out-shared"}
 ], rules
+
+# Deleted inbound paths must be absent from config
+config_str = json.dumps(config)
+assert "/pathAAA" not in config_str, "deleted path /pathAAA still present"
+assert "/pathBBB" not in config_str, "deleted path /pathBBB still present"
+assert "/pathCCC" not in config_str, "deleted path /pathCCC still present"
+
+# Retained inbound path must be preserved
+retained = next(inb for inb in config["inbounds"] if inb["tag"] == "vless-in-4")
+xhttp = retained.get("streamSettings", {}).get("xhttpSettings", {})
+assert xhttp.get("path") == "/pathDDD", f"retained path changed: {xhttp.get('path')}"
+assert xhttp.get("mode") == "packet-up", f"retained mode changed: {xhttp.get('mode')}"
+print("xhttp path/mode assertions ok")
 PY
 
 if NEW_CONFIG_FILE="$CONFIG_FILE" DELETE_SELECTION="2-1" DELETE_PORTS_FILE="$PORTS_FILE" python3 "$BATCH_DELETE_PY" >/dev/null 2>&1; then

@@ -1,11 +1,16 @@
 #!/bin/bash
 # =====================================================
-#  Xray VLESS Reality 中转 → SOCKS5 住宅节点 万能部署脚本
+#  Xray VLESS XHTTP Reality 中转 → SOCKS5 住宅节点 万能部署脚本
 #  By Wayne Shen
+#  Derived from superchaospc/xray-relay (MIT License)
 #
-#  v2.2.20 修复点：
-#    - 流量统计表格改为按终端显示宽度（东亚全角=2列）填充对齐，
-#      中文备注/超长节点名不再让各列错位（原先用 len() 按码点数填充）
+#  v1.0.0 首发版本（基于 xray-relay v2.2.20）：
+#    - 所有管理的 VLESS 入站从 RAW/TCP + XTLS-Vision + REALITY
+#      迁移至 XHTTP + REALITY（每节点独立随机路径，支持 mode=auto/stream-one/stream-up/packet-up）
+#    - 移除旧版 Vision flow 字段；XHTTP 使用自己的 XMUX 行为
+#    - 新增 XHTTP_MODE / XHTTP_PATH 环境变量控制默认模式与单节点路径
+#    - 版本检测：要求 Xray >= 24.10.31（XHTTP+REALITY 首个稳定支持版本）
+#    - 保留所有 16 个菜单功能、中转架构、监控、防火墙、流量统计与回滚流程
 #
 #  v2.2.19 改进点：
 #    - 菜单 6 流量统计新增“节点名称”列，直接显示每个端口对应的 _remark 名称
@@ -156,6 +161,12 @@ XRAY_INSTALL_REF="${XRAY_INSTALL_REF:-$XRAY_INSTALL_REF_DEFAULT}"
 XRAY_INSTALL_SHA256="${XRAY_INSTALL_SHA256:-$XRAY_INSTALL_SHA256_DEFAULT}"
 # 是否在敏感输出中隐藏 UUID/密码片段（设 1 启用）
 XRAY_REDACT="${XRAY_REDACT:-0}"
+# XHTTP 传输模式：auto（默认）/ stream-one / stream-up / packet-up
+XHTTP_MODE="${XHTTP_MODE:-auto}"
+# 单节点创建时的强制路径（留空则随机生成；批量创建忽略此变量）
+XHTTP_PATH="${XHTTP_PATH:-}"
+# 支持 XHTTP+REALITY 的最低 Xray 版本（2024-10-31 首个稳定支持版本）
+MIN_XHTTP_XRAY_VERSION="24.10.31"
 
 # qrencode 安装状态缓存：0=可用 1=不可用 unset=未尝试
 _QRENCODE_CHECKED=""
@@ -164,7 +175,7 @@ _QRENCODE_CHECKED=""
 print_banner() {
     echo -e "${CYAN}"
     echo "╔═══════════════════════════════════════════════╗"
-    echo "║   Xray VLESS Reality 中转部署工具 v2.2.20    ║"
+    echo "║   Xray XHTTP Reality 中转部署工具 v1.0.0     ║"
     echo "║   多节点 · 一键部署 · 配置自动回滚           ║"
     echo "╚═══════════════════════════════════════════════╝"
     echo -e "${NC}"
@@ -1196,6 +1207,166 @@ print(format_vless_host(os.environ["HOST"]))
 PYEOF
 }
 
+# ========== XHTTP 传输助手 ==========
+xhttp_helpers_py() {
+    cat <<'PYEOF'
+import re
+import secrets
+import urllib.parse
+
+VALID_XHTTP_MODES = {"auto", "stream-one", "stream-up", "packet-up"}
+
+def validate_xhttp_mode(mode):
+    if mode not in VALID_XHTTP_MODES:
+        raise ValueError(f"XHTTP_MODE must be auto, stream-one, stream-up, or packet-up; got {mode!r}")
+    return mode
+
+def normalize_xhttp_path(path):
+    path = "/" + str(path).lstrip("/")
+    if not re.fullmatch(r"/[A-Za-z0-9._~!$&'()*+,;=:@%/-]+", path):
+        raise ValueError(f"invalid XHTTP path: {path!r}")
+    return path
+
+def generate_xhttp_path(existing=()):
+    existing = set(existing)
+    for _ in range(100):
+        candidate = "/" + secrets.token_urlsafe(18).rstrip("=")
+        if candidate not in existing:
+            return candidate
+    raise RuntimeError("failed to generate unique XHTTP path")
+
+def build_vless_link(uuid, host, port, sni, fp, pbk, sid, path, mode, name):
+    if ":" in host and not (host.startswith("[") and host.endswith("]")):
+        host = f"[{host}]"
+    query = urllib.parse.urlencode({
+        "encryption": "none",
+        "security": "reality",
+        "sni": sni,
+        "fp": fp,
+        "pbk": pbk,
+        "sid": sid,
+        "type": "xhttp",
+        "path": path,
+        "mode": mode,
+    })
+    return f"vless://{uuid}@{host}:{port}?{query}#{urllib.parse.quote(name, safe='')}"
+PYEOF
+}
+
+validate_xhttp_mode() {
+    local mode="$1"
+    XHTTP_MODE_VAL="$mode" XHTTP_HELPERS_PY="$(xhttp_helpers_py)" python3 - <<'PYEOF'
+import os, sys
+exec(os.environ["XHTTP_HELPERS_PY"])
+try:
+    validate_xhttp_mode(os.environ["XHTTP_MODE_VAL"])
+except ValueError as e:
+    print(str(e), file=sys.stderr)
+    sys.exit(1)
+PYEOF
+}
+
+generate_xhttp_path() {
+    local existing_json
+    if [ $# -eq 0 ]; then
+        existing_json="[]"
+    else
+        existing_json=$(printf '%s\n' "$@" | python3 -c 'import json,sys; print(json.dumps([l for l in sys.stdin.read().splitlines() if l]))')
+    fi
+    EXISTING_PATHS_JSON="$existing_json" XHTTP_HELPERS_PY="$(xhttp_helpers_py)" python3 - <<'PYEOF'
+import json, os, sys
+exec(os.environ["XHTTP_HELPERS_PY"])
+existing = json.loads(os.environ.get("EXISTING_PATHS_JSON", "[]"))
+try:
+    print(generate_xhttp_path(existing))
+except Exception as e:
+    print(str(e), file=sys.stderr)
+    sys.exit(1)
+PYEOF
+}
+
+normalize_xhttp_path() {
+    local path="$1"
+    XHTTP_PATH_VAL="$path" XHTTP_HELPERS_PY="$(xhttp_helpers_py)" python3 - <<'PYEOF'
+import os, sys
+exec(os.environ["XHTTP_HELPERS_PY"])
+try:
+    print(normalize_xhttp_path(os.environ["XHTTP_PATH_VAL"]))
+except ValueError as e:
+    print(str(e), file=sys.stderr)
+    sys.exit(1)
+PYEOF
+}
+
+build_vless_link() {
+    local uuid="$1" host="$2" port="$3" sni="$4" fp="$5" pbk="$6" sid="$7" path="$8" mode="$9" name="${10}"
+    BL_UUID="$uuid" BL_HOST="$host" BL_PORT="$port" BL_SNI="$sni" BL_FP="$fp" \
+    BL_PBK="$pbk" BL_SID="$sid" BL_PATH="$path" BL_MODE="$mode" BL_NAME="$name" \
+    XHTTP_HELPERS_PY="$(xhttp_helpers_py)" python3 - <<'PYEOF'
+import os, sys
+exec(os.environ["XHTTP_HELPERS_PY"])
+try:
+    print(build_vless_link(
+        os.environ["BL_UUID"],
+        os.environ["BL_HOST"],
+        int(os.environ["BL_PORT"]),
+        os.environ["BL_SNI"],
+        os.environ["BL_FP"],
+        os.environ["BL_PBK"],
+        os.environ["BL_SID"],
+        os.environ["BL_PATH"],
+        os.environ["BL_MODE"],
+        os.environ["BL_NAME"],
+    ))
+except Exception as e:
+    print(str(e), file=sys.stderr)
+    sys.exit(1)
+PYEOF
+}
+
+# ========== Xray 版本检测 ==========
+parse_xray_version() {
+    local version_line="$1"
+    echo "$version_line" | python3 -c '
+import re, sys
+m = re.search(r"\b(\d+\.\d+\.\d+)\b", sys.stdin.read())
+if m:
+    print(m.group(1))
+else:
+    sys.exit(1)
+'
+}
+
+version_at_least() {
+    local actual="$1" required="$2"
+    python3 - "$actual" "$required" <<'PYEOF'
+import sys
+def parse(v):
+    return tuple(int(x) for x in v.split("."))
+actual = parse(sys.argv[1])
+required = parse(sys.argv[2])
+sys.exit(0 if actual >= required else 1)
+PYEOF
+}
+
+check_xray_version_for_xhttp() {
+    local xray_bin="${XRAY_BIN:-xray}"
+    local current_ver
+    if ! command -v "$xray_bin" &>/dev/null; then
+        return 0
+    fi
+    current_ver=$(parse_xray_version "$("$xray_bin" version 2>/dev/null | head -1)" 2>/dev/null || true)
+    if [ -z "$current_ver" ]; then
+        echo -e "${YELLOW}⚠ 无法解析 Xray 版本，请确认版本 >= ${MIN_XHTTP_XRAY_VERSION}${NC}" >&2
+        return 0
+    fi
+    if ! version_at_least "$current_ver" "$MIN_XHTTP_XRAY_VERSION"; then
+        echo -e "${RED}✗ Xray ${current_ver} 不支持 XHTTP+REALITY，最低要求 ${MIN_XHTTP_XRAY_VERSION}${NC}" >&2
+        echo -e "${YELLOW}  请通过菜单 8「更新 Xray」升级后重试${NC}" >&2
+        return 1
+    fi
+}
+
 load_node_identity() {
     eval "$(
         CONFIG_FILE="$CONFIG_FILE" python3 << 'PYEOF'
@@ -1266,6 +1437,9 @@ install_xray() {
             echo -e "${RED}Xray 安装失败，无法继续部署${NC}"
             exit 1
         fi
+    fi
+    if ! check_xray_version_for_xhttp; then
+        exit 1
     fi
     mkdir -p /var/log/xray
 }
@@ -1423,16 +1597,37 @@ generate_config() {
     SHORT_ID="$SHORT_ID" \
     REALITY_DEST="$REALITY_DEST" \
     REALITY_SERVER_NAME="$REALITY_SERVER_NAME" \
+    XHTTP_MODE="$XHTTP_MODE" \
+    XHTTP_PATH="$XHTTP_PATH" \
     NODES_DATA="$NODES_DATA" \
     python3 << 'PYEOF'
-import json, os
+import json, os, re, secrets, sys
 new_config = os.environ["NEW_CONFIG_FILE"]
 uuid = os.environ["UUID"]
 private_key = os.environ["PRIVATE_KEY"]
 short_id = os.environ["SHORT_ID"]
 reality_dest = os.environ["REALITY_DEST"]
 reality_server_name = os.environ["REALITY_SERVER_NAME"]
+xhttp_mode = os.environ.get("XHTTP_MODE", "auto")
+xhttp_path_override = os.environ.get("XHTTP_PATH", "")
 raw_nodes = [line for line in os.environ["NODES_DATA"].splitlines() if line.strip()]
+
+VALID_XHTTP_MODES = {"auto", "stream-one", "stream-up", "packet-up"}
+if xhttp_mode not in VALID_XHTTP_MODES:
+    print(f"XHTTP_MODE invalid: {xhttp_mode!r}", file=sys.stderr); sys.exit(1)
+
+def _norm_path(p):
+    p = "/" + str(p).lstrip("/")
+    if not re.fullmatch(r"/[A-Za-z0-9._~!$&'()*+,;=:@%/-]+", p):
+        raise ValueError(f"invalid XHTTP path: {p!r}")
+    return p
+
+def _gen_path(existing):
+    for _ in range(100):
+        c = "/" + secrets.token_urlsafe(18).rstrip("=")
+        if c not in existing:
+            return c
+    raise RuntimeError("failed to generate unique XHTTP path")
 
 inbounds = [{"tag":"api-in","port":10085,"listen":"127.0.0.1","protocol":"dokodemo-door","settings":{"address":"127.0.0.1"}}]
 outbounds = []
@@ -1442,18 +1637,37 @@ rules = [
     {"type":"field","outboundTag":"direct","ip":["geoip:private"]},
 ]
 
+existing_paths = set()
 for idx, node in enumerate(raw_nodes, start=1):
     port, s_host, s_port, s_user, s_pass, name = node.split("\x1f", 5)
     tag_in = f"vless-in-{idx}"
+    if xhttp_path_override and len(raw_nodes) == 1:
+        try:
+            path = _norm_path(xhttp_path_override)
+        except ValueError as e:
+            print(str(e), file=sys.stderr); sys.exit(1)
+        if path in existing_paths:
+            print(f"XHTTP_PATH collision: {path!r}", file=sys.stderr); sys.exit(1)
+    else:
+        path = _gen_path(existing_paths)
+    existing_paths.add(path)
     inbounds.append({
         "tag": tag_in, "port": int(port), "protocol": "vless",
         "_remark": name,
-        "settings": {"clients":[{"id":uuid,"flow":"xtls-rprx-vision"}],"decryption":"none"},
-        "streamSettings": {"network":"tcp","security":"reality",
-            "realitySettings":{"dest":reality_dest,"serverNames":[reality_server_name],
-                "privateKey":private_key,"shortIds":[short_id]},
-            "sockopt":{"tcpFastOpen":True,"tcpNoDelay":True}},
-        "sniffing":{"enabled":True,"destOverride":["http","tls"]}
+        "settings": {"clients":[{"id":uuid}],"decryption":"none"},
+        "streamSettings": {
+            "network": "xhttp",
+            "security": "reality",
+            "xhttpSettings": {"path": path, "mode": xhttp_mode},
+            "realitySettings": {
+                "target": reality_dest,
+                "serverNames": [reality_server_name],
+                "privateKey": private_key,
+                "shortIds": [short_id]
+            },
+            "sockopt": {"tcpFastOpen": True, "tcpNoDelay": True}
+        },
+        "sniffing": {"enabled": True, "destOverride": ["http", "tls"]}
     })
     if s_host == "__DIRECT__":
         rules.append({"type":"field","inboundTag":[tag_in],"outboundTag":"direct"})
@@ -1592,9 +1806,26 @@ print_result() {
     : > "$INFO_FILE"
     chmod 600 "$INFO_FILE"
 
+    local XHTTP_NODE_PATH XHTTP_NODE_MODE LINK
     for i in "${!NODES[@]}"; do
         IFS=$'\x1f' read -r PORT S_HOST S_PORT S_USER S_PASS NAME <<< "${NODES[$i]}"
-        LINK="vless://${UUID}@${LINK_HOST}:${PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${REALITY_SERVER_NAME}&fp=${CLIENT_FP}&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp#${NAME}"
+        XHTTP_PM=$(CONFIG_FILE="$CONFIG_FILE" PORT_VAL="$PORT" python3 -c '
+import json,os,sys
+cfg=json.load(open(os.environ["CONFIG_FILE"]))
+port=int(os.environ["PORT_VAL"])
+for inb in cfg.get("inbounds",[]):
+    if inb.get("port")==port:
+        x=inb.get("streamSettings",{}).get("xhttpSettings",{})
+        sys.stdout.write(x.get("path","") + "\x1f" + x.get("mode","auto") + "\n")
+        break
+else:
+    sys.stdout.write("\x1fauto\n")
+' 2>/dev/null || printf '\x1fauto\n')
+        IFS=$'\x1f' read -r XHTTP_NODE_PATH XHTTP_NODE_MODE <<< "$XHTTP_PM"
+        [ -n "$XHTTP_NODE_MODE" ] || XHTTP_NODE_MODE=auto
+        LINK=$(build_vless_link "$UUID" "$LINK_HOST" "$PORT" \
+            "$REALITY_SERVER_NAME" "$CLIENT_FP" "$PUBLIC_KEY" "$SHORT_ID" \
+            "$XHTTP_NODE_PATH" "$XHTTP_NODE_MODE" "$NAME")
 
         echo -e "${GREEN}━━━ ${NAME} ━━━${NC}"
         echo -e "  监听端口: ${PORT}"
@@ -1763,12 +1994,22 @@ for inb in config.get("inbounds", []):
         else:
             dest_line = f"出口: {out_tag or 'unknown'}"
 
-    link = (
-        f"vless://{uuid}@{link_host}:{port}"
-        f"?encryption=none&flow=xtls-rprx-vision&security=reality"
-        f"&sni={reality_server_name}&fp={client_fp}&pbk={public_key}"
-        f"&sid={short_id}&type=tcp#{safe_name}"
-    )
+    xhttp = inb.get("streamSettings", {}).get("xhttpSettings", {})
+    xhttp_path = xhttp.get("path", "")
+    xhttp_mode = xhttp.get("mode", "auto")
+    import urllib.parse as _uparse
+    query = _uparse.urlencode({
+        "encryption": "none",
+        "security": "reality",
+        "sni": reality_server_name,
+        "fp": client_fp,
+        "pbk": public_key,
+        "sid": short_id,
+        "type": "xhttp",
+        "path": xhttp_path,
+        "mode": xhttp_mode,
+    })
+    link = f"vless://{uuid}@{link_host}:{port}?{query}#{_uparse.quote(safe_name, safe='')}"
     lines.extend([f"=== {safe_name} ===", f"端口: {port}", dest_line, f"链接: {link}", ""])
 
 with open(info_file, "w") as f:
@@ -1942,11 +2183,10 @@ add_batch_nodes() {
     if ! NEW_CONFIG_FILE="$NEW_CONFIG" \
         UUID="$UUID" PRIVATE_KEY="$PRIVATE_KEY" SHORT_ID="$SHORT_ID" \
         REALITY_DEST="$REALITY_DEST" REALITY_SERVER_NAME="$REALITY_SERVER_NAME" \
+        XHTTP_MODE="$XHTTP_MODE" \
         BATCH_DATA="$BATCH_DATA" \
         python3 << 'PYEOF'
-import json
-import os
-import sys
+import json, os, re, secrets, sys
 
 new_config = os.environ["NEW_CONFIG_FILE"]
 uuid = os.environ["UUID"]
@@ -1954,10 +2194,28 @@ private_key = os.environ["PRIVATE_KEY"]
 short_id = os.environ["SHORT_ID"]
 reality_dest = os.environ["REALITY_DEST"]
 reality_server_name = os.environ["REALITY_SERVER_NAME"]
+xhttp_mode = os.environ.get("XHTTP_MODE", "auto")
 raw_nodes = [line for line in os.environ["BATCH_DATA"].splitlines() if line.strip()]
+
+VALID_XHTTP_MODES = {"auto", "stream-one", "stream-up", "packet-up"}
+if xhttp_mode not in VALID_XHTTP_MODES:
+    print(f"XHTTP_MODE invalid: {xhttp_mode!r}", file=sys.stderr); sys.exit(1)
+
+def _gen_path(existing):
+    for _ in range(100):
+        c = "/" + secrets.token_urlsafe(18).rstrip("=")
+        if c not in existing:
+            return c
+    raise RuntimeError("failed to generate unique XHTTP path")
 
 with open(new_config) as f:
     config = json.load(f)
+
+existing_paths = {
+    inb.get("streamSettings", {}).get("xhttpSettings", {}).get("path")
+    for inb in config.get("inbounds", [])
+    if inb.get("streamSettings", {}).get("xhttpSettings", {}).get("path")
+}
 
 outbounds = config.setdefault("outbounds", [])
 if not any(ob.get("tag") == "direct" for ob in outbounds):
@@ -1976,14 +2234,24 @@ for node in raw_nodes:
         print("S_PORT 非数字", file=sys.stderr)
         sys.exit(2)
 
+    path = _gen_path(existing_paths)
+    existing_paths.add(path)
     config.setdefault("inbounds", []).append({
         "tag": f"vless-in-{tag_num}", "port": new_port, "protocol": "vless",
         "_remark": node_name,
-        "settings": {"clients": [{"id": uuid, "flow": "xtls-rprx-vision"}], "decryption": "none"},
-        "streamSettings": {"network": "tcp", "security": "reality",
-            "realitySettings": {"dest": reality_dest, "serverNames": [reality_server_name],
-                "privateKey": private_key, "shortIds": [short_id]},
-            "sockopt": {"tcpFastOpen": True, "tcpNoDelay": True}},
+        "settings": {"clients": [{"id": uuid}], "decryption": "none"},
+        "streamSettings": {
+            "network": "xhttp",
+            "security": "reality",
+            "xhttpSettings": {"path": path, "mode": xhttp_mode},
+            "realitySettings": {
+                "target": reality_dest,
+                "serverNames": [reality_server_name],
+                "privateKey": private_key,
+                "shortIds": [short_id]
+            },
+            "sockopt": {"tcpFastOpen": True, "tcpNoDelay": True}
+        },
         "sniffing": {"enabled": True, "destOverride": ["http", "tls"]}
     })
     new_outbounds.append({
@@ -2025,7 +2293,23 @@ PYEOF
         LINK_HOST=$(format_vless_host "$VPS_IP")
         for line in "${BATCH_NODES[@]}"; do
             IFS=$'\x1f' read -r _ LISTEN_PORT S_HOST S_PORT _ _ NODE_NAME <<< "$line"
-            LINK="vless://${UUID}@${LINK_HOST}:${LISTEN_PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${REALITY_SERVER_NAME}&fp=${CLIENT_FP}&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp#${NODE_NAME}"
+            XHTTP_PM=$(CONFIG_FILE="$CONFIG_FILE" LISTEN_PORT_VAL="$LISTEN_PORT" python3 -c '
+import json,os,sys
+cfg=json.load(open(os.environ["CONFIG_FILE"]))
+port=int(os.environ["LISTEN_PORT_VAL"])
+for inb in cfg.get("inbounds",[]):
+    if inb.get("port")==port:
+        x=inb.get("streamSettings",{}).get("xhttpSettings",{})
+        sys.stdout.write(x.get("path","") + "\x1f" + x.get("mode","auto") + "\n")
+        break
+else:
+    sys.stdout.write("\x1fauto\n")
+' 2>/dev/null || printf '\x1fauto\n')
+            IFS=$'\x1f' read -r XHTTP_NODE_PATH XHTTP_NODE_MODE <<< "$XHTTP_PM"
+            [ -n "$XHTTP_NODE_MODE" ] || XHTTP_NODE_MODE=auto
+            LINK=$(build_vless_link "$UUID" "$LINK_HOST" "$LISTEN_PORT" \
+                "$REALITY_SERVER_NAME" "$CLIENT_FP" "$PUBLIC_KEY" "$SHORT_ID" \
+                "$XHTTP_NODE_PATH" "$XHTTP_NODE_MODE" "$NODE_NAME")
             echo ""
             echo -e "${GREEN}━━━ ${NODE_NAME} ━━━${NC}"
             echo -e "  监听端口: ${LISTEN_PORT}"
@@ -2090,10 +2374,11 @@ add_node() {
         TAG_NUM="$TAG_NUM" NEW_PORT="$NEW_PORT" UUID="$UUID" \
         PRIVATE_KEY="$PRIVATE_KEY" SHORT_ID="$SHORT_ID" \
         REALITY_DEST="$REALITY_DEST" REALITY_SERVER_NAME="$REALITY_SERVER_NAME" \
+        XHTTP_MODE="$XHTTP_MODE" XHTTP_PATH="$XHTTP_PATH" \
         NODE_NAME="$NODE_NAME" \
         S_HOST="$S_HOST" S_PORT="$S_PORT" S_USER="$S_USER" S_PASS="$S_PASS" \
         python3 << 'PYEOF'
-import json, os, sys
+import json, os, re, secrets, sys
 new_config = os.environ["NEW_CONFIG_FILE"]
 tag_num = os.environ["TAG_NUM"]
 new_port = int(os.environ["NEW_PORT"])
@@ -2102,6 +2387,8 @@ private_key = os.environ["PRIVATE_KEY"]
 short_id = os.environ["SHORT_ID"]
 reality_dest = os.environ["REALITY_DEST"]
 reality_server_name = os.environ["REALITY_SERVER_NAME"]
+xhttp_mode = os.environ.get("XHTTP_MODE", "auto")
+xhttp_path_override = os.environ.get("XHTTP_PATH", "")
 node_name = os.environ["NODE_NAME"]
 s_host = os.environ["S_HOST"]
 try:
@@ -2111,18 +2398,59 @@ except ValueError:
 s_user = os.environ["S_USER"]
 s_pass = os.environ["S_PASS"]
 
+VALID_XHTTP_MODES = {"auto", "stream-one", "stream-up", "packet-up"}
+if xhttp_mode not in VALID_XHTTP_MODES:
+    print(f"XHTTP_MODE invalid: {xhttp_mode!r}", file=sys.stderr); sys.exit(1)
+
+def _norm_path(p):
+    p = "/" + str(p).lstrip("/")
+    if not re.fullmatch(r"/[A-Za-z0-9._~!$&'()*+,;=:@%/-]+", p):
+        raise ValueError(f"invalid XHTTP path: {p!r}")
+    return p
+
+def _gen_path(existing):
+    for _ in range(100):
+        c = "/" + secrets.token_urlsafe(18).rstrip("=")
+        if c not in existing:
+            return c
+    raise RuntimeError("failed to generate unique XHTTP path")
+
 with open(new_config) as f:
     config = json.load(f)
+
+existing_paths = {
+    inb.get("streamSettings", {}).get("xhttpSettings", {}).get("path")
+    for inb in config.get("inbounds", [])
+    if inb.get("streamSettings", {}).get("xhttpSettings", {}).get("path")
+}
+
+if xhttp_path_override:
+    try:
+        path = _norm_path(xhttp_path_override)
+    except ValueError as e:
+        print(str(e), file=sys.stderr); sys.exit(1)
+    if path in existing_paths:
+        print(f"XHTTP_PATH collision: {path!r}", file=sys.stderr); sys.exit(1)
+else:
+    path = _gen_path(existing_paths)
 
 config.setdefault("inbounds", []).append({
     "tag": f"vless-in-{tag_num}", "port": new_port, "protocol": "vless",
     "_remark": node_name,
-    "settings": {"clients":[{"id":uuid,"flow":"xtls-rprx-vision"}],"decryption":"none"},
-    "streamSettings": {"network":"tcp","security":"reality",
-        "realitySettings":{"dest":reality_dest,"serverNames":[reality_server_name],
-            "privateKey":private_key,"shortIds":[short_id]},
-        "sockopt":{"tcpFastOpen":True,"tcpNoDelay":True}},
-    "sniffing":{"enabled":True,"destOverride":["http","tls"]}
+    "settings": {"clients":[{"id":uuid}],"decryption":"none"},
+    "streamSettings": {
+        "network": "xhttp",
+        "security": "reality",
+        "xhttpSettings": {"path": path, "mode": xhttp_mode},
+        "realitySettings": {
+            "target": reality_dest,
+            "serverNames": [reality_server_name],
+            "privateKey": private_key,
+            "shortIds": [short_id]
+        },
+        "sockopt": {"tcpFastOpen": True, "tcpNoDelay": True}
+    },
+    "sniffing": {"enabled": True, "destOverride": ["http", "tls"]}
 })
 
 outbounds = config.setdefault("outbounds", [])
@@ -2161,9 +2489,25 @@ PYEOF
 
     if restart_with_rollback; then
         apply_firewall_port_capture "$NEW_PORT"
-        local LINK_HOST
+        local LINK_HOST XHTTP_NODE_PATH XHTTP_NODE_MODE
         LINK_HOST=$(format_vless_host "$VPS_IP")
-        LINK="vless://${UUID}@${LINK_HOST}:${NEW_PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${REALITY_SERVER_NAME}&fp=${CLIENT_FP}&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp#${NODE_NAME}"
+        XHTTP_PM=$(CONFIG_FILE="$CONFIG_FILE" NEW_PORT="$NEW_PORT" python3 -c '
+import json,os,sys
+cfg=json.load(open(os.environ["CONFIG_FILE"]))
+port=int(os.environ["NEW_PORT"])
+for inb in cfg.get("inbounds",[]):
+    if inb.get("port")==port:
+        x=inb.get("streamSettings",{}).get("xhttpSettings",{})
+        sys.stdout.write(x.get("path","") + "\x1f" + x.get("mode","auto") + "\n")
+        break
+else:
+    sys.stdout.write("\x1fauto\n")
+' 2>/dev/null || printf '\x1fauto\n')
+        IFS=$'\x1f' read -r XHTTP_NODE_PATH XHTTP_NODE_MODE <<< "$XHTTP_PM"
+        [ -n "$XHTTP_NODE_MODE" ] || XHTTP_NODE_MODE=auto
+        LINK=$(build_vless_link "$UUID" "$LINK_HOST" "$NEW_PORT" \
+            "$REALITY_SERVER_NAME" "$CLIENT_FP" "$PUBLIC_KEY" "$SHORT_ID" \
+            "$XHTTP_NODE_PATH" "$XHTTP_NODE_MODE" "$NODE_NAME")
         echo ""
         echo -e "${GREEN}✓ 节点添加成功！${NC}"
         echo -e "${GREEN}端口: ${NEW_PORT}${NC}"
@@ -2221,28 +2565,72 @@ add_direct_node() {
         TAG_NUM="$TAG_NUM" NEW_PORT="$NEW_PORT" UUID="$UUID" \
         PRIVATE_KEY="$PRIVATE_KEY" SHORT_ID="$SHORT_ID" \
         REALITY_DEST="$REALITY_DEST" REALITY_SERVER_NAME="$REALITY_SERVER_NAME" \
+        XHTTP_MODE="$XHTTP_MODE" XHTTP_PATH="$XHTTP_PATH" \
         NODE_NAME="$NODE_NAME" \
         python3 << 'PYEOF'
-import json, os
+import json, os, re, secrets, sys
 new_config = os.environ["NEW_CONFIG_FILE"]
 tag_num = os.environ["TAG_NUM"]
 new_port = int(os.environ["NEW_PORT"])
 uuid = os.environ["UUID"]; private_key = os.environ["PRIVATE_KEY"]; short_id = os.environ["SHORT_ID"]
 reality_dest = os.environ["REALITY_DEST"]; reality_server_name = os.environ["REALITY_SERVER_NAME"]
+xhttp_mode = os.environ.get("XHTTP_MODE", "auto")
+xhttp_path_override = os.environ.get("XHTTP_PATH", "")
 node_name = os.environ["NODE_NAME"]
+
+VALID_XHTTP_MODES = {"auto", "stream-one", "stream-up", "packet-up"}
+if xhttp_mode not in VALID_XHTTP_MODES:
+    print(f"XHTTP_MODE invalid: {xhttp_mode!r}", file=sys.stderr); sys.exit(1)
+
+def _norm_path(p):
+    p = "/" + str(p).lstrip("/")
+    if not re.fullmatch(r"/[A-Za-z0-9._~!$&'()*+,;=:@%/-]+", p):
+        raise ValueError(f"invalid XHTTP path: {p!r}")
+    return p
+
+def _gen_path(existing):
+    for _ in range(100):
+        c = "/" + secrets.token_urlsafe(18).rstrip("=")
+        if c not in existing:
+            return c
+    raise RuntimeError("failed to generate unique XHTTP path")
 
 with open(new_config) as f:
     config = json.load(f)
 
+existing_paths = {
+    inb.get("streamSettings", {}).get("xhttpSettings", {}).get("path")
+    for inb in config.get("inbounds", [])
+    if inb.get("streamSettings", {}).get("xhttpSettings", {}).get("path")
+}
+
+if xhttp_path_override:
+    try:
+        path = _norm_path(xhttp_path_override)
+    except ValueError as e:
+        print(str(e), file=sys.stderr); sys.exit(1)
+    if path in existing_paths:
+        print(f"XHTTP_PATH collision: {path!r}", file=sys.stderr); sys.exit(1)
+else:
+    path = _gen_path(existing_paths)
+
 config.setdefault("inbounds", []).append({
     "tag": f"vless-in-{tag_num}", "port": new_port, "protocol": "vless",
     "_remark": node_name,
-    "settings": {"clients":[{"id":uuid,"flow":"xtls-rprx-vision"}],"decryption":"none"},
-    "streamSettings": {"network":"tcp","security":"reality",
-        "realitySettings":{"dest":reality_dest,"serverNames":[reality_server_name],
-            "privateKey":private_key,"shortIds":[short_id]},
-        "sockopt":{"tcpFastOpen":True,"tcpNoDelay":True}},
-    "sniffing":{"enabled":True,"destOverride":["http","tls"]}
+    "settings": {"clients":[{"id":uuid}],"decryption":"none"},
+    "streamSettings": {
+        "network": "xhttp",
+        "security": "reality",
+        "xhttpSettings": {"path": path, "mode": xhttp_mode},
+        "realitySettings": {
+            "target": reality_dest,
+            "serverNames": [reality_server_name],
+            "privateKey": private_key,
+            "shortIds": [short_id]
+        },
+        "sockopt": {"tcpFastOpen": True, "tcpNoDelay": True}
+    },
+    "sniffing": {"enabled": True, "destOverride": ["http", "tls"]}
 })
 
 outbounds = config.setdefault("outbounds", [])
@@ -2269,9 +2657,25 @@ PYEOF
 
     if restart_with_rollback; then
         apply_firewall_port_capture "$NEW_PORT"
-        local LINK_HOST
+        local LINK_HOST XHTTP_NODE_PATH XHTTP_NODE_MODE
         LINK_HOST=$(format_vless_host "$VPS_IP")
-        LINK="vless://${UUID}@${LINK_HOST}:${NEW_PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${REALITY_SERVER_NAME}&fp=${CLIENT_FP}&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp#${NODE_NAME}"
+        XHTTP_PM=$(CONFIG_FILE="$CONFIG_FILE" NEW_PORT="$NEW_PORT" python3 -c '
+import json,os,sys
+cfg=json.load(open(os.environ["CONFIG_FILE"]))
+port=int(os.environ["NEW_PORT"])
+for inb in cfg.get("inbounds",[]):
+    if inb.get("port")==port:
+        x=inb.get("streamSettings",{}).get("xhttpSettings",{})
+        sys.stdout.write(x.get("path","") + "\x1f" + x.get("mode","auto") + "\n")
+        break
+else:
+    sys.stdout.write("\x1fauto\n")
+' 2>/dev/null || printf '\x1fauto\n')
+        IFS=$'\x1f' read -r XHTTP_NODE_PATH XHTTP_NODE_MODE <<< "$XHTTP_PM"
+        [ -n "$XHTTP_NODE_MODE" ] || XHTTP_NODE_MODE=auto
+        LINK=$(build_vless_link "$UUID" "$LINK_HOST" "$NEW_PORT" \
+            "$REALITY_SERVER_NAME" "$CLIENT_FP" "$PUBLIC_KEY" "$SHORT_ID" \
+            "$XHTTP_NODE_PATH" "$XHTTP_NODE_MODE" "$NODE_NAME")
         echo ""
         echo -e "${GREEN}✓ VPS 直连节点添加成功！${NC}"
         echo -e "${GREEN}端口: ${NEW_PORT}${NC}"
@@ -2350,10 +2754,10 @@ add_batch_direct_nodes() {
     if ! NEW_CONFIG_FILE="$NEW_CONFIG" \
         UUID="$UUID" PRIVATE_KEY="$PRIVATE_KEY" SHORT_ID="$SHORT_ID" \
         REALITY_DEST="$REALITY_DEST" REALITY_SERVER_NAME="$REALITY_SERVER_NAME" \
+        XHTTP_MODE="$XHTTP_MODE" \
         BATCH_DIRECT_DATA="$BATCH_DIRECT_DATA" \
         python3 << 'PYEOF'
-import json
-import os
+import json, os, re, secrets, sys
 
 new_config = os.environ["NEW_CONFIG_FILE"]
 uuid = os.environ["UUID"]
@@ -2361,10 +2765,28 @@ private_key = os.environ["PRIVATE_KEY"]
 short_id = os.environ["SHORT_ID"]
 reality_dest = os.environ["REALITY_DEST"]
 reality_server_name = os.environ["REALITY_SERVER_NAME"]
+xhttp_mode = os.environ.get("XHTTP_MODE", "auto")
 raw_nodes = [line for line in os.environ["BATCH_DIRECT_DATA"].splitlines() if line.strip()]
+
+VALID_XHTTP_MODES = {"auto", "stream-one", "stream-up", "packet-up"}
+if xhttp_mode not in VALID_XHTTP_MODES:
+    print(f"XHTTP_MODE invalid: {xhttp_mode!r}", file=sys.stderr); sys.exit(1)
+
+def _gen_path(existing):
+    for _ in range(100):
+        c = "/" + secrets.token_urlsafe(18).rstrip("=")
+        if c not in existing:
+            return c
+    raise RuntimeError("failed to generate unique XHTTP path")
 
 with open(new_config) as f:
     config = json.load(f)
+
+existing_paths = {
+    inb.get("streamSettings", {}).get("xhttpSettings", {}).get("path")
+    for inb in config.get("inbounds", [])
+    if inb.get("streamSettings", {}).get("xhttpSettings", {}).get("path")
+}
 
 config.setdefault("inbounds", [])
 outbounds = config.setdefault("outbounds", [])
@@ -2377,14 +2799,24 @@ rules = config.setdefault("routing", {}).setdefault("rules", [])
 for node in raw_nodes:
     tag_num, new_port, node_name = node.split("\x1f", 2)
     new_port = int(new_port)
+    path = _gen_path(existing_paths)
+    existing_paths.add(path)
     config["inbounds"].append({
         "tag": f"vless-in-{tag_num}", "port": new_port, "protocol": "vless",
         "_remark": node_name,
-        "settings": {"clients": [{"id": uuid, "flow": "xtls-rprx-vision"}], "decryption": "none"},
-        "streamSettings": {"network": "tcp", "security": "reality",
-            "realitySettings": {"dest": reality_dest, "serverNames": [reality_server_name],
-                "privateKey": private_key, "shortIds": [short_id]},
-            "sockopt": {"tcpFastOpen": True, "tcpNoDelay": True}},
+        "settings": {"clients": [{"id": uuid}], "decryption": "none"},
+        "streamSettings": {
+            "network": "xhttp",
+            "security": "reality",
+            "xhttpSettings": {"path": path, "mode": xhttp_mode},
+            "realitySettings": {
+                "target": reality_dest,
+                "serverNames": [reality_server_name],
+                "privateKey": private_key,
+                "shortIds": [short_id]
+            },
+            "sockopt": {"tcpFastOpen": True, "tcpNoDelay": True}
+        },
         "sniffing": {"enabled": True, "destOverride": ["http", "tls"]}
     })
     rules.append({"type": "field", "inboundTag": [f"vless-in-{tag_num}"], "outboundTag": "direct"})
@@ -2430,11 +2862,27 @@ PYEOF
         echo ""
         echo -e "${GREEN}✓ 批量 VPS 直连节点添加成功！共 ${#BATCH_DIRECT_NODES[@]} 个${NC}"
         REFRESH_NAME_PORT="" REFRESH_NAME="" refresh_info_file_from_config || true
-        local LINK_HOST LINK
+        local LINK_HOST LINK XHTTP_NODE_PATH XHTTP_NODE_MODE
         LINK_HOST=$(format_vless_host "$VPS_IP")
         for line in "${BATCH_DIRECT_NODES[@]}"; do
             IFS=$'\x1f' read -r _ LISTEN_PORT NODE_NAME <<< "$line"
-            LINK="vless://${UUID}@${LINK_HOST}:${LISTEN_PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${REALITY_SERVER_NAME}&fp=${CLIENT_FP}&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp#${NODE_NAME}"
+            XHTTP_PM=$(CONFIG_FILE="$CONFIG_FILE" LISTEN_PORT_VAL="$LISTEN_PORT" python3 -c '
+import json,os,sys
+cfg=json.load(open(os.environ["CONFIG_FILE"]))
+port=int(os.environ["LISTEN_PORT_VAL"])
+for inb in cfg.get("inbounds",[]):
+    if inb.get("port")==port:
+        x=inb.get("streamSettings",{}).get("xhttpSettings",{})
+        sys.stdout.write(x.get("path","") + "\x1f" + x.get("mode","auto") + "\n")
+        break
+else:
+    sys.stdout.write("\x1fauto\n")
+' 2>/dev/null || printf '\x1fauto\n')
+            IFS=$'\x1f' read -r XHTTP_NODE_PATH XHTTP_NODE_MODE <<< "$XHTTP_PM"
+            [ -n "$XHTTP_NODE_MODE" ] || XHTTP_NODE_MODE=auto
+            LINK=$(build_vless_link "$UUID" "$LINK_HOST" "$LISTEN_PORT" \
+                "$REALITY_SERVER_NAME" "$CLIENT_FP" "$PUBLIC_KEY" "$SHORT_ID" \
+                "$XHTTP_NODE_PATH" "$XHTTP_NODE_MODE" "$NODE_NAME")
             echo ""
             echo -e "${GREEN}━━━ ${NODE_NAME} ━━━${NC}"
             echo -e "  监听端口: ${LISTEN_PORT}"
@@ -2449,6 +2897,7 @@ PYEOF
 show_status() {
     echo -e "${GREEN}━━━ Xray 状态 ━━━${NC}"
     systemctl status xray --no-pager -l || true
+    check_xray_version_for_xhttp || true
     echo ""
     echo -e "${GREEN}━━━ BBR 状态 ━━━${NC}"
     sysctl net.ipv4.tcp_congestion_control 2>/dev/null || echo "BBR 尚未配置"
@@ -2970,9 +3419,25 @@ PYEOF
 )
         NODE_NAME=$(echo "$NODE_NAME" | tr ' \t#?&\r\n' '-' | tr -s '-' | sed 's/^-//; s/-$//')
         [ -z "$NODE_NAME" ] && NODE_NAME="Port-${NEW_PORT}"
-        local LINK_HOST
+        local LINK_HOST XHTTP_NODE_PATH XHTTP_NODE_MODE NEW_LINK
         LINK_HOST=$(format_vless_host "$VPS_IP")
-        NEW_LINK="vless://${UUID}@${LINK_HOST}:${NEW_PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${REALITY_SERVER_NAME}&fp=${CLIENT_FP}&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp#${NODE_NAME}"
+        XHTTP_PM=$(CONFIG_FILE="$CONFIG_FILE" NEW_PORT="$NEW_PORT" python3 -c '
+import json,os,sys
+cfg=json.load(open(os.environ["CONFIG_FILE"]))
+port=int(os.environ["NEW_PORT"])
+for inb in cfg.get("inbounds",[]):
+    if inb.get("port")==port:
+        x=inb.get("streamSettings",{}).get("xhttpSettings",{})
+        sys.stdout.write(x.get("path","") + "\x1f" + x.get("mode","auto") + "\n")
+        break
+else:
+    sys.stdout.write("\x1fauto\n")
+' 2>/dev/null || printf '\x1fauto\n')
+        IFS=$'\x1f' read -r XHTTP_NODE_PATH XHTTP_NODE_MODE <<< "$XHTTP_PM"
+        [ -n "$XHTTP_NODE_MODE" ] || XHTTP_NODE_MODE=auto
+        NEW_LINK=$(build_vless_link "$UUID" "$LINK_HOST" "$NEW_PORT" \
+            "$REALITY_SERVER_NAME" "$CLIENT_FP" "$PUBLIC_KEY" "$SHORT_ID" \
+            "$XHTTP_NODE_PATH" "$XHTTP_NODE_MODE" "$NODE_NAME")
         echo -e "${YELLOW}新链接:${NC} ${NEW_LINK}"
         refresh_info_file_from_config || true
         show_qrcode "$NEW_LINK" "$NODE_NAME"
@@ -3466,6 +3931,14 @@ troubleshoot() {
     else
         echo -e "  ${RED}✗ Xray 未运行${NC}"; ERRORS=$((ERRORS+1))
         journalctl -u xray -n 10 --no-pager 2>/dev/null | sed 's/^/    /'
+    fi
+    if command -v xray &>/dev/null; then
+        local _xver
+        _xver=$(parse_xray_version "$(xray version 2>/dev/null | head -1)" 2>/dev/null || true)
+        if [ -n "$_xver" ] && ! version_at_least "$_xver" "$MIN_XHTTP_XRAY_VERSION"; then
+            echo -e "  ${RED}✗ Xray ${_xver} 不支持 XHTTP+REALITY（最低 ${MIN_XHTTP_XRAY_VERSION}），请用菜单 8 升级${NC}"
+            ERRORS=$((ERRORS+1))
+        fi
     fi
 
     echo ""

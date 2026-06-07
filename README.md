@@ -1,23 +1,29 @@
-# 🚀 xray-relay - Xray VLESS+REALITY 一键部署中转脚本
+# 🚀 xray-xhttp-relay - Xray VLESS+XHTTP+REALITY 一键部署中转脚本
 
-> One-click Xray VLESS+REALITY deployment with residential SOCKS5 multi-hop relay support
+> One-click Xray VLESS+XHTTP+REALITY deployment with residential SOCKS5 multi-hop relay support
 
-![GitHub repo size](https://img.shields.io/github/repo-size/superchaospc/xray-relay?style=flat-square)
-![GitHub last commit](https://img.shields.io/github/last-commit/superchaospc/xray-relay?style=flat-square)
-![GitHub License](https://img.shields.io/github/license/superchaospc/xray-relay?style=flat-square)
+![GitHub repo size](https://img.shields.io/github/repo-size/superchaospc/xray-xhttp-relay?style=flat-square)
+![GitHub last commit](https://img.shields.io/github/last-commit/superchaospc/xray-xhttp-relay?style=flat-square)
+![GitHub License](https://img.shields.io/github/license/superchaospc/xray-xhttp-relay?style=flat-square)
 ![Shell Script](https://img.shields.io/badge/Shell-Bash-4EAA25?style=flat-square&logo=gnu-bash&logoColor=white)
 ![Platform](https://img.shields.io/badge/Platform-Linux-FCC624?style=flat-square&logo=linux&logoColor=black)
-![Xray](https://img.shields.io/badge/Core-Xray-2F6FED?style=flat-square)
+![Xray](https://img.shields.io/badge/Core-Xray%20%E2%89%A524.10.31-2F6FED?style=flat-square)
 
-VPS 上一键部署 **Xray VLESS + REALITY** 的 Bash 脚本。既支持 **VPS 直连线路**，也支持 **VPS 入口 → 住宅 SOCKS5 出口** 的中转线路；支持单条添加、批量生成住宅 SOCKS5 中转节点、批量生成 VPS 直连节点、固定端口→节点映射、配置自动校验回滚、流量统计、监控报警，以及生成的 VLESS 链接自动渲染终端二维码，方便 Shadowrocket / V2rayN / V2rayNG / Neobox 直接扫码导入。
+VPS 上一键部署 **Xray VLESS + XHTTP + REALITY** 的 Bash 脚本。每个节点使用独立随机 XHTTP 路径（支持 `XHTTP_MODE=auto/stream-one/stream-up/packet-up`）。既支持 **VPS 直连线路**，也支持 **VPS 入口 → 住宅 SOCKS5 出口** 的中转线路；支持单条添加、批量生成住宅 SOCKS5 中转节点、批量生成 VPS 直连节点、固定端口→节点映射、配置自动校验回滚、流量统计、监控报警，以及生成 VLESS 链接、订阅和终端二维码。客户端必须支持 XHTTP，并正确保留 `type=xhttp`、`path` 与 `mode` 参数。
+
+> ⚠️ **兼容性要求**：本脚本使用 **XHTTP 传输**，要求 Xray core **≥ 24.10.31**（2024-10-31 发布，XHTTP+REALITY 首个稳定支持版本）。**不支持 XTLS-Vision / TCP 传输**，如需继续使用 Vision 请参见原版 [superchaospc/xray-relay](https://github.com/superchaospc/xray-relay)。
+
+> ⚠️ **无自动迁移**：本脚本不会自动将已有 RAW/TCP + Vision 节点转换为 XHTTP。若在已运行 Xray 的服务器上执行“全新安装”，活动配置 `/usr/local/etc/xray/config.json` 将被新配置替换；请先备份，并安排迁移窗口，避免现有客户端立即断线。
 
 > ⚠️ **免责声明**：本项目仅供学习研究网络协议与系统运维使用。请用户遵守所在国家/地区的法律法规，自行承担使用后果。作者不对使用本脚本造成的任何直接或间接损失负责。
+
+> 📖 **来源**：本项目派生自 [superchaospc/xray-relay](https://github.com/superchaospc/xray-relay) v2.2.20（MIT License），将全部 VLESS 入站从 TCP+XTLS-Vision 迁移至 XHTTP+REALITY。
 
 ---
 
 ## ✨ 功能特性
 
-- 🔐 **VLESS + REALITY + XTLS-Vision** 满血配置，默认伪装目标为 `www.cloudflare.com`，可用环境变量覆盖
+- 🔐 **VLESS + XHTTP + REALITY** 配置，每节点独立随机路径，默认伪装目标为 `www.cloudflare.com`，可用环境变量覆盖；支持 `XHTTP_MODE=auto/stream-one/stream-up/packet-up`
 - 🌉 **中转架构**：VPS 入口 → 前置 SOCKS5（住宅 IP）出口，也支持纯 VPS 直连模式
 - 🎯 **固定端口映射**：每个前置节点绑定独立监听端口，客户端可精确选择出口，不做负载均衡
 - 🧩 **多节点管理**：菜单化添加、删除节点，修改端口和节点名称
@@ -286,25 +292,29 @@ CLIENT_FP=ios REALITY_SERVER_NAME=www.apple.com REALITY_DEST=www.apple.com:443 /
 | `REALITY_SERVER_NAME` | `www.cloudflare.com` | VLESS 链接里的 SNI |
 | `REALITY_DEST` | `${REALITY_SERVER_NAME}:443` | Xray REALITY 回源目标 |
 | `IP_CACHE_TTL` | `3600` | VPS 公网 IP 缓存秒数，EIP 切换后可临时调小 |
+| `XHTTP_MODE` | `auto` | XHTTP 传输模式：`auto` / `stream-one` / `stream-up` / `packet-up` |
+| `XHTTP_PATH` | （随机生成）| 单节点强制指定路径（如 `/mypath`）；批量创建时忽略，各节点独立随机 |
 
 ---
 
 ## ⚡ 快速开始
 
-> 🎉 **最新版本：[v2.2.20](https://github.com/superchaospc/xray-relay/releases/tag/v2.2.20)** — 修复中文/超长节点名导致的流量统计表格列错位（按终端显示宽度对齐）。下面的命令默认拉取 `main` 分支，即包含该修复的最新版。
+> 🎉 **最新版本：[v1.0.0](https://github.com/superchaospc/xray-xhttp-relay/releases/tag/v1.0.0)** — 基于 xray-relay v2.2.20，所有 VLESS 入站从 TCP+XTLS-Vision 迁移至 XHTTP+REALITY。下面的命令默认拉取 `main` 分支。
+>
+> ⚠️ **要求 Xray ≥ 24.10.31**。首次运行时脚本会检查版本；若版本过低请先用菜单 `8) 更新 Xray` 升级。
 
 ### 推荐方式：下载后运行
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/superchaospc/xray-relay/main/xray_deploy.sh -o /root/xray_deploy.sh
+curl -fsSL https://raw.githubusercontent.com/superchaospc/xray-xhttp-relay/main/xray_deploy.sh -o /root/xray_deploy.sh
 chmod +x /root/xray_deploy.sh
 /root/xray_deploy.sh
 ```
 
-如需锁定到固定版本（可复现），把 URL 里的 `main` 换成对应 tag，例如 `v2.2.20`：
+如需锁定到固定版本（可复现），把 URL 里的 `main` 换成对应 tag，例如 `v1.0.0`：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/superchaospc/xray-relay/v2.2.20/xray_deploy.sh -o /root/xray_deploy.sh
+curl -fsSL https://raw.githubusercontent.com/superchaospc/xray-xhttp-relay/v1.0.0/xray_deploy.sh -o /root/xray_deploy.sh
 chmod +x /root/xray_deploy.sh
 /root/xray_deploy.sh
 ```
@@ -339,7 +349,7 @@ XRAY_INSTALL_REF=main XRAY_INSTALL_SHA256= /root/xray_deploy.sh
 也可以一行运行远端脚本：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/superchaospc/xray-relay/main/xray_deploy.sh -o /tmp/xray_deploy.sh \
+curl -fsSL https://raw.githubusercontent.com/superchaospc/xray-xhttp-relay/main/xray_deploy.sh -o /tmp/xray_deploy.sh \
   && chmod +x /tmp/xray_deploy.sh \
   && XRAY_INSTALL_REF=main XRAY_INSTALL_SHA256= /tmp/xray_deploy.sh
 ```
@@ -374,12 +384,9 @@ curl -fsSL https://raw.githubusercontent.com/superchaospc/xray-relay/main/xray_d
 
 ### 📲 导入客户端
 
-脚本在每个节点生成完毕后会自动打印二维码。扫码方式：
+脚本在每个节点生成完毕后会自动打印二维码。导入前请确认客户端当前版本明确支持 **XHTTP + REALITY**；仅支持 REALITY、但不识别 XHTTP 的版本无法使用这些节点。GUI 导入后还应检查 `type=xhttp`、`path` 和 `mode` 是否完整保留。
 
-- 🍎 **Shadowrocket (iOS)** — 首页右上角扫一扫
-- 🪟 **V2rayN (Windows)** — `Ctrl+Shift+Alt+S` 从屏幕扫码，或从剪贴板导入
-- 🤖 **V2rayNG (Android)** — 加号 → 扫描二维码（对着另一台屏幕）
-- 📦 **Neobox (Android)** — 导入配置 → 扫描屏幕二维码
+常见 Xray 系客户端通常提供扫码或剪贴板导入入口，但不同版本的 XHTTP 支持进度可能不同。若 GUI 丢失参数，请升级客户端或手动导入 JSON 配置，不要仅凭“扫码成功”判断兼容。
 
 > 💡 扫码成功率与终端背景相关。白底或纯色主题最佳，避免透明/渐变背景。
 
@@ -431,9 +438,9 @@ XRAY_PRINT_SUB_DATA_URL=1 bash xray_deploy.sh
 
 ```mermaid
 flowchart LR
-    client["客户端<br/>Shadowrocket<br/>V2rayN / V2rayNG / NekoBox"]
+    client["支持 XHTTP + REALITY 的客户端"]
 
-    subgraph vps["VPS · Xray VLESS + REALITY"]
+    subgraph vps["VPS · Xray VLESS + XHTTP + REALITY"]
         inA["入口端口 A"] --> socks1["SOCKS5 节点 1"]
         inB["入口端口 B"] --> socks2["SOCKS5 节点 2"]
         inC["入口端口 C"] --> direct["VPS 直连出口"]
@@ -449,7 +456,7 @@ flowchart LR
 ```
 
 - 每个入口端口对应一个出口（一对一固定映射），客户端通过连接不同端口选择出口节点
-- 前端 VLESS+REALITY 保证中转链路不被 GFW 识别
+- 前端使用 VLESS + XHTTP + REALITY，客户端必须完整支持该组合
 - 后端 SOCKS5 可接入任意住宅 IP 提供商（支持带账号密码认证）
 
 ---
@@ -509,6 +516,11 @@ bash run_all_tests.sh
 - `test_get_ip_eof.sh`：公网 IP 获取在 EOF 场景下返回失败
 - `test_next_port.sh`：入站端口计算，包括端口耗尽时返回非 0
 - `test_public_key_and_ports.sh`：public key 派生失败、业务端口过滤与端口修改链接备注
+- `test_xhttp_helpers.sh`：XHTTP 模式、路径和分享链接编码
+- `test_xhttp_config.sh`：单节点、批量节点的 XHTTP + REALITY 配置结构与路径唯一性
+- `test_xray_version.sh`：XHTTP 最低 Xray 版本解析与诊断
+- `test_project_identity.sh`：仓库身份、16 项菜单与迁移警告
+- `test_xray_real_config.sh`：使用本机真实 Xray 校验最小 XHTTP + REALITY 配置
 - `test_atomic_config.sh`：配置原子写入与回滚流程
 - `test_restart_rollback_permissions.sh`：重启失败回滚后恢复 `config.json` 权限
 - `test_info_parse.sh`：节点信息解析
@@ -529,7 +541,7 @@ bash run_all_tests.sh
 当前测试结果：
 
 ```text
-通过: 25  失败: 0  跳过: 0
+通过: 30  失败: 0  跳过: 0
 ```
 
 如果系统未安装 `shellcheck`，静态检查会自动跳过该项。
@@ -608,7 +620,7 @@ A: 新版 Xray 对配置文件格式识别更严格，临时配置文件需要 `
 
 A: 这通常是 Xray service 以 `nobody` 等非 root 用户运行，但配置文件被写成了 `root:root 600`。当前脚本会强制把新写入或回滚恢复的 `config.json` 设为 `640 root:<Xray 服务用户主组>`，确保 Xray 服务用户可读，同时避免本地其他用户读取 UUID/REALITY 私钥。
 
-历史教训：早期版本曾尝试「继承现有文件 owner/group」，但一旦初始文件意外是 `600 root:root`（比如 root umask 077 下用 Python `open('w')` 写出来的），后续每次写新配置都会延续这个错误，nobody 永远读不到。详见 [commit f28238c](https://github.com/superchaospc/xray-relay/commit/f28238c)。
+历史教训：早期版本曾尝试「继承现有文件 owner/group」，但一旦初始文件意外是 `600 root:root`（比如 root umask 077 下用 Python `open('w')` 写出来的），后续每次写新配置都会延续这个错误，nobody 永远读不到。详见上游 [commit f28238c](https://github.com/superchaospc/xray-relay/commit/f28238c)。
 
 **Q: 如何升级到新版本脚本？**
 
@@ -630,6 +642,7 @@ A: 常用位置：
 
 ## 🙏 致谢
 
+- [superchaospc/xray-relay](https://github.com/superchaospc/xray-relay) — 本项目派生自 v2.2.20，原作者 Wayne Shen（MIT License）
 - [XTLS/Xray-core](https://github.com/XTLS/Xray-core) — 核心代理引擎
 - [XTLS/Xray-install](https://github.com/XTLS/Xray-install) — 官方安装脚本
 

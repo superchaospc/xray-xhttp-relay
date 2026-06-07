@@ -21,12 +21,12 @@ cat > "$INFO_FILE" <<'EOF'
 === 192.204.3.26 ===
 端口: 8443
 落地: 192.204.3.26:12324
-链接: vless://uuid@example.com:8443?encryption=none&type=tcp#192.204.3.26
+链接: vless://uuid@example.com:8443?encryption=none&security=reality&type=xhttp&path=%2FaA1bB2c&mode=auto#192.204.3.26
 
 === 192.204.0.126 ===
 端口: 8444
 落地: 192.204.0.126:12324
-链接: vless://uuid@example.com:8444?encryption=none&type=tcp#192.204.0.126
+链接: vless://uuid@example.com:8444?encryption=none&security=reality&type=xhttp&path=%2FdD4eE5f&mode=stream-one#192.204.0.126
 EOF
 
 INFO_FILE="$INFO_FILE" SUB_FILE="$SUB_FILE" python3 "$SUB_PY"
@@ -37,7 +37,7 @@ import sys
 print(base64.b64decode(open(sys.argv[1], "rb").read()).decode("utf-8"), end="")
 PY
 )"
-expected=$'vless://uuid@example.com:8443?encryption=none&type=tcp#192.204.3.26\nvless://uuid@example.com:8444?encryption=none&type=tcp#192.204.0.126'
+expected=$'vless://uuid@example.com:8443?encryption=none&security=reality&type=xhttp&path=%2FaA1bB2c&mode=auto#192.204.3.26\nvless://uuid@example.com:8444?encryption=none&security=reality&type=xhttp&path=%2FdD4eE5f&mode=stream-one#192.204.0.126'
 
 if [ "$decoded" != "$expected" ]; then
     echo "订阅内容不匹配"

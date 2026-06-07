@@ -35,7 +35,11 @@ cat > "$CONFIG_FILE" <<'JSON'
       "protocol": "vless",
       "_remark": "LA-Direct",
       "settings": {"clients": [{"id": "ignored"}]},
-      "streamSettings": {"realitySettings": {"shortIds": ["sid"]}}
+      "streamSettings": {
+        "network": "xhttp",
+        "xhttpSettings": {"path": "/path-one", "mode": "auto"},
+        "realitySettings": {"shortIds": ["sid"]}
+      }
     },
     {
       "tag": "vless-in-2",
@@ -43,7 +47,11 @@ cat > "$CONFIG_FILE" <<'JSON'
       "protocol": "vless",
       "_remark": "US-Residential",
       "settings": {"clients": [{"id": "ignored"}]},
-      "streamSettings": {"realitySettings": {"shortIds": ["sid"]}}
+      "streamSettings": {
+        "network": "xhttp",
+        "xhttpSettings": {"path": "/path-two", "mode": "auto"},
+        "realitySettings": {"shortIds": ["sid"]}
+      }
     }
   ],
   "outbounds": [
@@ -77,5 +85,7 @@ grep -Fq "链接: vless://abc-uuid@38.47.118.82:443" "$INFO_FILE"
 grep -Fq "#LA-Direct" "$INFO_FILE"
 grep -Fq "落地: 161.77.77.5:12324" "$INFO_FILE"
 grep -Fq "#US-Residential" "$INFO_FILE"
+grep -q "type=xhttp" "$INFO_FILE"
+grep -Fq "path=%2F" "$INFO_FILE"
 
 echo "config remarks ok"

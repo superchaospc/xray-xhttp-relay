@@ -44,6 +44,11 @@ run "test_prompt_read_trim.sh (交互输入空白修剪)" bash test_prompt_read_
 run "test_get_ip_eof.sh (get_ip EOF 返回失败)" bash test_get_ip_eof.sh
 run "test_next_port.sh (入站端口计算)" bash test_next_port.sh
 run "test_public_key_and_ports.sh (public key 与业务端口)" bash test_public_key_and_ports.sh
+run "test_xhttp_helpers.sh (XHTTP 传输助手)" bash test_xhttp_helpers.sh
+run "test_xhttp_config.sh (XHTTP 配置生成)" bash test_xhttp_config.sh
+run "test_xray_version.sh (Xray XHTTP 版本兼容)" bash test_xray_version.sh
+run "test_project_identity.sh (项目身份与迁移警告)" bash test_project_identity.sh
+run "test_xray_real_config.sh (真实 Xray 配置校验)" bash test_xray_real_config.sh
 run "test_atomic_config.sh (配置原子写入)" bash test_atomic_config.sh
 run "test_restart_rollback_permissions.sh (回滚权限恢复)" bash test_restart_rollback_permissions.sh
 run "test_info_parse.sh (INFO_FILE 解析)" bash test_info_parse.sh

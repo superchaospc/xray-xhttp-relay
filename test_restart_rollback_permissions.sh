@@ -1,5 +1,6 @@
 #!/bin/bash
 # 验证回滚后会重新归一化 config.json 权限，且 systemctl restart 非零不会绕过回滚。
+# 同时验证回滚恢复的 XHTTP 配置（含 path/mode）与备份字节完全一致。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -13,8 +14,12 @@ awk '/^preflight_check$/ {exit} {print}' "$ROOT/xray_deploy.sh" > "$DEFS"
 source "$DEFS"
 
 CONFIG_FILE="$TMP_DIR/config.json"
+
+# 使用一个包含 XHTTP xhttpSettings 的真实结构作为备份内容
+BACKUP_CONTENT='{"inbounds":[{"tag":"vless-in-1","port":443,"_remark":"LA-Direct","streamSettings":{"network":"xhttp","xhttpSettings":{"path":"/fixedSecretPath","mode":"stream-one"}}}]}'
+
 printf '%s\n' '{"broken":true}' > "$CONFIG_FILE"
-printf '%s\n' '{"original":true}' > "${CONFIG_FILE}.bak.20260513-120000"
+printf '%s\n' "$BACKUP_CONTENT" > "${CONFIG_FILE}.bak.20260513-120000"
 chmod 600 "${CONFIG_FILE}.bak.20260513-120000"
 
 detect_xray_service_group() {
@@ -70,7 +75,27 @@ if [ "$restart_count" -ne 2 ]; then
     exit 1
 fi
 
-grep -q '"original":true' "$CONFIG_FILE"
+# 权限恢复
 [ "$(file_mode "$CONFIG_FILE")" = "640" ]
+
+# 验证内容字节完全一致（XHTTP path/mode 保留）
+restored=$(cat "$CONFIG_FILE")
+if [ "$restored" != "$BACKUP_CONTENT" ]; then
+    echo "回滚内容与备份不一致"
+    echo "expected: $BACKUP_CONTENT"
+    echo "got:      $restored"
+    exit 1
+fi
+
+# 验证恢复后 XHTTP 路径和模式完整
+python3 - "$CONFIG_FILE" <<'PY'
+import json, sys
+cfg = json.load(open(sys.argv[1]))
+inb = cfg["inbounds"][0]
+xhttp = inb.get("streamSettings", {}).get("xhttpSettings", {})
+assert xhttp.get("path") == "/fixedSecretPath", f"path lost after rollback: {xhttp.get('path')}"
+assert xhttp.get("mode") == "stream-one", f"mode lost after rollback: {xhttp.get('mode')}"
+print("xhttp config restored byte-for-byte ok")
+PY
 
 echo "restart rollback permissions ok"

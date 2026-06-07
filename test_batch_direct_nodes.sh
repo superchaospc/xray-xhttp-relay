@@ -71,6 +71,26 @@ assert routes[("vless-in-6",)] == "direct"
 assert routes[("vless-in-7",)] == "direct"
 PY
 
+python3 - "$CONFIG_FILE" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1]) as f:
+    config = json.load(f)
+
+inbounds = {item.get("tag"): item for item in config.get("inbounds", [])}
+for inb in [inbounds["vless-in-6"], inbounds["vless-in-7"]]:
+    stream = inb.get("streamSettings", {})
+    assert stream.get("network") == "xhttp", f"Expected xhttp, got {stream.get('network')}"
+    assert "xhttpSettings" in stream, "xhttpSettings missing"
+    assert stream["xhttpSettings"]["path"].startswith("/"), "path must start with /"
+    assert "flow" not in inb.get("settings", {}).get("clients", [{}])[0], "flow field must not be present"
+
+paths = [inbounds[t]["streamSettings"]["xhttpSettings"]["path"] for t in ["vless-in-6", "vless-in-7"]]
+assert len(set(paths)) == 2, f"paths must be distinct: {paths}"
+print("xhttp config shape ok")
+PY
+
 grep -Fq "14) 批量添加 VPS 直连节点" "$ROOT/xray_deploy.sh"
 grep -Fq "请选择 [0-16]" "$ROOT/xray_deploy.sh"
 grep -Fq "XRAY_PRINT_SUB_DATA_URL=1 print_subscription_info" "$ROOT/xray_deploy.sh"
