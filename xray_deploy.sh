@@ -4,6 +4,13 @@
 #  By Wayne Shen
 #  Derived from superchaospc/xray-relay (MIT License)
 #
+#  v1.0.2 修复：
+#    - 排错诊断 [8/8] 错误日志扫描不再把目标域名含 error/fail 字样的访问日志成功行
+#      （如 accepted tcp:errortracking.deepl.com）误报为错误
+#    - 新增 xray_filter_recent_errors：先剔除 accepted 成功行，再匹配真实错误标志
+#      （[error]/failed/rejected/refused/no route/deadline exceeded/i-o timeout/panic）
+#    - 新增 test_diagnostic_error_filter.sh 覆盖该防误报逻辑
+#
 #  v1.0.1 修复：
 #    - 公网 IP 检测在 IPv4 不可用时自动回退到 IPv6
 #    - IPv4 和 IPv6 都不可用时才提示手动输入
@@ -179,7 +186,7 @@ _QRENCODE_CHECKED=""
 print_banner() {
     echo -e "${CYAN}"
     echo "╔═══════════════════════════════════════════════╗"
-    echo "║   Xray XHTTP Reality 中转部署工具 v1.0.1     ║"
+    echo "║   Xray XHTTP Reality 中转部署工具 v1.0.2     ║"
     echo "║   多节点 · 一键部署 · 配置自动回滚           ║"
     echo "╚═══════════════════════════════════════════════╝"
     echo -e "${NC}"
@@ -3939,6 +3946,15 @@ xray_journal_since() {
     esac
 }
 
+# 从 stdin 的 journal 输出中筛出 Xray 真正的错误/失败日志。
+# 访问日志成功行形如 "... accepted tcp:host:port [...]"，其目标域名可能恰好含有
+# error/fail 等字样（如 errortracking.deepl.com），不能据此判定为错误，故先整体剔除，
+# 再用错误级别标志与失败短语匹配，避免误报。
+xray_filter_recent_errors() {
+    grep -v -E "accepted (tcp|udp):" \
+        | grep -i -E "\[error\]|failed|rejected| refused|no route to host|deadline exceeded|i/o timeout|panic"
+}
+
 troubleshoot() {
     echo -e "${CYAN}╔═══════════════════════════════════════════════╗${NC}"
     echo -e "${CYAN}║              排错诊断                         ║${NC}"
@@ -4085,7 +4101,7 @@ PYEOF
     echo ""
     echo -e "${GREEN}[8/8] 最近错误日志${NC}"
     JOURNAL_SINCE=$(xray_journal_since)
-    RECENT=$(journalctl -u xray --since "$JOURNAL_SINCE" --no-pager 2>/dev/null | grep -i -E "error|fail|refused" | tail -5)
+    RECENT=$(journalctl -u xray --since "$JOURNAL_SINCE" --no-pager 2>/dev/null | xray_filter_recent_errors | tail -5)
     if [ -n "$RECENT" ]; then
         echo -e "  ${YELLOW}发现错误:${NC}"
         echo "$RECENT" | sed 's/^/    /'

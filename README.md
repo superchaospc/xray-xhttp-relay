@@ -49,6 +49,14 @@ VPS 上一键部署 **Xray VLESS + XHTTP + REALITY** 的 Bash 脚本。每个节
 
 ---
 
+## 🆕 v1.0.2 诊断错误日志防误报
+
+- 排错诊断 `[8/8] 最近错误日志` 不再把目标域名含 `error`/`fail` 字样的访问日志**成功行**（如 `accepted tcp:errortracking.deepl.com:443`）误判为错误
+- 新增 `xray_filter_recent_errors`：先剔除 `accepted tcp/udp:` 成功行，再匹配真实错误标志（`[error]`/`failed`/`rejected`/`refused`/`no route to host`/`deadline exceeded`/`i/o timeout`/`panic`）
+- 新增 `test_diagnostic_error_filter.sh`，覆盖「域名含 error 的成功连接不误报、真实失败行保留」
+
+---
+
 ## 🆕 v1.0.1 IPv6 自动回退
 
 - 公网 IP 检测优先尝试 IPv4，失败后自动回退到 IPv6，仍获取不到才要求手动输入
