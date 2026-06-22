@@ -40,6 +40,7 @@ VPS 上一键部署 **Xray VLESS + XHTTP + REALITY** 的 Bash 脚本。每个节
 - 🛟 **安全写配置**：生成临时 JSON → `xray run -test` 校验 → 备份旧配置 → 原子替换 → 启动失败自动回滚
 - 🧱 **自动防火墙放行**：依次尝试 `ufw` / `firewalld` / `nftables` / `iptables`，nftables 会识别真实 input 链，尽量持久化规则，并对云厂商安全组给出提醒
 - 🛡️ **REALITY 回落滥用防护**（默认开）：用独立 nftables 表对所有对外 REALITY 端口做「每源 IP 并发上限 + 新连接速率限制 + IP 黑名单」，封顶未认证连接刷爆 dest 回落带宽（回落流量不计入 xray 统计，曾导致单机 2 天被刷 700G）；菜单 `17` 可随时刷新规则、封禁/解封 IP、查看 Top 来源 IP
+- 🏠 **本地 REALITY 落地根治**（`REALITY_DEST_LOCAL=1`）：把回落目标改到本机自签 TLS（复用 Xray 自身、零新增依赖），回落流量留在本地、零外网带宽；`serverNames` 不变，已发出去的客户端链接无需改动
 - 🔒 **供应链保护**：默认固定 Xray 官方安装脚本 commit 并校验 sha256，也支持显式切回 `main`
 - ⚡ **BBR 加速**：自动开启 BBR 拥塞控制并写入内核调优参数
 - 📊 **流量统计**：基于 Xray API 的累计上行/下行流量查看
@@ -47,6 +48,45 @@ VPS 上一键部署 **Xray VLESS + XHTTP + REALITY** 的 Bash 脚本。每个节
 - 🚨 **监控报警**：可选配置邮件告警（Gmail/QQ/163 等 SMTP），每分钟巡检，异常自动发信
 - 📱 **终端二维码**：节点生成后直接在终端渲染 VLESS 二维码；支持 XHTTP 参数导入的客户端可扫码使用
 - 🐧 **多发行版支持**：Debian / Ubuntu / CentOS / AlmaLinux / Rocky / Fedora
+
+---
+
+## 🆕 v1.0.4 本地 REALITY 落地根治（`REALITY_DEST_LOCAL`）
+
+v1.0.3 的限速 guard 能**封顶**回落滥用，但回落本身仍会被转发到外网 dest。本版本提供**根治开关**：把 REALITY 的回落目标改到本机，未认证连接的回落流量从此留在本地、**零外网带宽**——而且复用 Xray 自身、**零新增依赖**。
+
+### 用法
+
+全新安装时加一个环境变量即可：
+
+```bash
+REALITY_DEST_LOCAL=1 bash xray_deploy.sh
+```
+
+脚本会：
+
+1. 用 `openssl` 生成自签证书（`CN` = `REALITY_SERVER_NAME`，默认 `www.cloudflare.com`），存到 `/usr/local/etc/xray/reality-dest.{crt,key}`
+2. 在**同一份 `config.json`** 内追加一个内置 inbound `reality-dest-local`：仅监听 `127.0.0.1:9443`、`tls` + 自签证书、`minVersion 1.3`（占位 nil UUID，仅作 TLS 落地）
+3. 把所有业务节点的 REALITY `target` 指向 `127.0.0.1:9443`
+
+**`serverNames` 保持不变 → 已经发出去的客户端订阅 / 链接全部无需改动。** 之后用菜单加节点时，`dest` 会自动沿用本地落地（无需每次再带环境变量）。
+
+### 行为与代价
+
+- 真实 REALITY 客户端不受影响：REALITY 靠公钥认证、不校验证书域名
+- 主动探测者会看到自签证书（而非真站证书），隐蔽性略降——换取回落**零外网流量**，对计费 / 限额型 VPS 很划算
+- 内部入站 `reality-dest-local` 已在全脚本节点枚举（列表 / 删除 / 改名 / 流量统计 / 端口回收）中统一排除，不影响任何现有管理操作；限速 guard 也不会去限它（本机端口）
+
+### 环境变量
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `REALITY_DEST_LOCAL` | `0` | `1` 启用本地落地 |
+| `REALITY_DEST_LOCAL_PORT` | `9443` | 本地落地监听端口（仅 127.0.0.1） |
+| `REALITY_DEST_CERT` | `/usr/local/etc/xray/reality-dest.crt` | 自签证书路径 |
+| `REALITY_DEST_KEY` | `/usr/local/etc/xray/reality-dest.key` | 自签私钥路径 |
+
+> 限速 guard（v1.0.3）与本地落地（v1.0.4）可叠加使用：guard 兜住连接洪流，本地落地消灭回落外网流量。
 
 ---
 
@@ -112,7 +152,7 @@ REALITY_DEST=127.0.0.1:9443 bash xray_deploy.sh
 
 > 代价：主动探测者会看到自签证书（而非真 CF 证书），隐蔽性略降；但相比流量被刷爆 / VPS 被限速封停，通常很划算。
 >
-> 把这套「本机落地」直接做成脚本开关 `REALITY_DEST_LOCAL=1`（复用 Xray 自身的内置 TLS inbound、零新增依赖）计划在后续版本提供。
+> **v1.0.4 起已内建该方案**——无需手动装 nginx，安装时加 `REALITY_DEST_LOCAL=1` 即可（复用 Xray 自身的内置 TLS inbound、零新增依赖）。详见下方 v1.0.4。
 
 ---
 

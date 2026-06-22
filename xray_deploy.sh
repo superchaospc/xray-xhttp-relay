@@ -4,6 +4,18 @@
 #  By Wayne Shen
 #  Derived from superchaospc/xray-relay (MIT License)
 #
+#  v1.0.4 新增（本地 REALITY 落地根治）：
+#    - 新增 REALITY_DEST_LOCAL=1：安装时在同一份 config 内追加一个仅监听 127.0.0.1
+#      的自签 TLS inbound（tag=reality-dest-local，复用 Xray 自身、零新增依赖），并把
+#      所有业务节点的 REALITY target 指向它——未认证连接的回落流量从此留在本机、
+#      彻底不烧外网带宽。serverNames 不变，已发出去的客户端链接无需改动。
+#    - load_node_identity 现从现有 config 读出 target/serverNames，加节点时 dest 自动
+#      与现有安装一致（含本地落地）；并跳过 reality-dest-local 内部入站
+#    - 全脚本约 18 处业务节点枚举统一排除 reality-dest-local（列表/删除/改名/统计/
+#      端口回收等不受影响；端口占用检查仍保留以防与本地落地端口冲突）
+#    - 卸载清理自签证书；新增 test_local_dest.sh
+#    - 代价：主动探测者会看到自签证书而非真站证书，隐蔽性略降，换取回落零外网流量
+#
 #  v1.0.3 新增（REALITY 回落滥用防护）：
 #    - 默认开启 nftables「回落限速 guard」：对所有对外 REALITY 业务端口做
 #      每源 IP 并发上限（XRAY_GUARD_CONN_MAX，默认 600）+ 新连接速率限制
@@ -188,6 +200,17 @@ XRAY_GUARD_BLOCKLIST_FILE="${XRAY_GUARD_BLOCKLIST_FILE:-/root/.xray_guard_blockl
 # 额外封禁 IP（逗号分隔，v4/v6 皆可），首次应用时并入 blocklist 文件
 XRAY_GUARD_BLOCK_IPS="${XRAY_GUARD_BLOCK_IPS:-}"
 #
+# === 本地 REALITY 落地根治 (REALITY_DEST_LOCAL) ===
+# REALITY_DEST_LOCAL=1 时，安装会在同一份 config 里额外加一个仅监听 127.0.0.1 的
+# 自签 TLS inbound（tag=reality-dest-local，复用 Xray 自身、零新增依赖），并把所有
+# 业务节点的 REALITY target 指向它。这样未认证连接的回落流量留在本机、彻底不烧外网
+# 带宽。serverNames 保持不变，已发出去的客户端链接无需改动。代价：主动探测者会看到
+# 自签证书而非真站证书，隐蔽性略降。安装后此设置由 config 自身决定（无需每次再带）。
+REALITY_DEST_LOCAL="${REALITY_DEST_LOCAL:-0}"
+REALITY_DEST_LOCAL_PORT="${REALITY_DEST_LOCAL_PORT:-9443}"
+REALITY_DEST_CERT="${REALITY_DEST_CERT:-/usr/local/etc/xray/reality-dest.crt}"
+REALITY_DEST_KEY="${REALITY_DEST_KEY:-/usr/local/etc/xray/reality-dest.key}"
+#
 # === Xray 官方安装脚本来源（供应链安全） ===
 #
 # 默认 pin 到已核对的 XTLS/Xray-install commit + install-release.sh sha256。
@@ -216,7 +239,7 @@ _QRENCODE_CHECKED=""
 print_banner() {
     echo -e "${CYAN}"
     echo "╔═══════════════════════════════════════════════╗"
-    echo "║   Xray XHTTP Reality 中转部署工具 v1.0.3     ║"
+    echo "║   Xray XHTTP Reality 中转部署工具 v1.0.4     ║"
     echo "║   多节点 · 一键部署 · 配置自动回滚           ║"
     echo "╚═══════════════════════════════════════════════╝"
     echo -e "${NC}"
@@ -1418,19 +1441,29 @@ load_node_identity() {
 import json, os, shlex
 with open(os.environ["CONFIG_FILE"]) as f:
     config = json.load(f)
-private_key = ""; short_id = ""; uuid = ""
+private_key = ""; short_id = ""; uuid = ""; dest = ""; sni = ""
 for inb in config.get("inbounds", []):
-    if inb.get("tag") == "api-in": continue
+    # 跳过内部 inbound：api 入口与本地 REALITY 落地（reality-dest-local 无 realitySettings）
+    if inb.get("tag") in ("api-in", "reality-dest-local"): continue
     reality = inb.get("streamSettings", {}).get("realitySettings", {})
+    if not reality.get("privateKey"): continue
     clients = inb.get("settings", {}).get("clients", [])
     private_key = reality.get("privateKey", "")
     short_ids = reality.get("shortIds", [])
     short_id = short_ids[0] if short_ids else ""
+    server_names = reality.get("serverNames", [])
+    sni = server_names[0] if server_names else ""
+    dest = reality.get("target", "")
     uuid = clients[0].get("id", "") if clients else ""
     break
 print(f"PRIVATE_KEY={shlex.quote(private_key)}")
 print(f"SHORT_ID={shlex.quote(short_id)}")
 print(f"UUID={shlex.quote(uuid)}")
+# 让后续 add/批量流程的 dest/SNI 与现有安装保持一致（含本地落地 127.0.0.1:port）
+if dest:
+    print(f"REALITY_DEST={shlex.quote(dest)}")
+if sni:
+    print(f"REALITY_SERVER_NAME={shlex.quote(sni)}")
 PYEOF
     )"
 }
@@ -1626,9 +1659,55 @@ collect_nodes() {
     done
 }
 
+# reality_dest_local_present: 现有 config 是否已包含本地落地 inbound
+reality_dest_local_present() {
+    [ -f "$CONFIG_FILE" ] || return 1
+    CONFIG_FILE="$CONFIG_FILE" python3 - <<'PY' 2>/dev/null
+import json, os, sys
+try:
+    cfg = json.load(open(os.environ["CONFIG_FILE"]))
+except Exception:
+    sys.exit(1)
+sys.exit(0 if any(i.get("tag") == "reality-dest-local" for i in cfg.get("inbounds", [])) else 1)
+PY
+}
+
+# setup_local_reality_dest: 启用本地 REALITY 落地时，确保自签证书存在并把 REALITY_DEST
+# 指向本机。若 config 已是本地落地安装，即使未显式带 REALITY_DEST_LOCAL=1 也自动沿用。
+setup_local_reality_dest() {
+    local want="${REALITY_DEST_LOCAL:-0}"
+    if [ "$want" != "1" ] && reality_dest_local_present; then
+        want=1
+    fi
+    [ "$want" = "1" ] || return 0
+    REALITY_DEST_LOCAL=1
+    mkdir -p "$(dirname "$REALITY_DEST_CERT")" 2>/dev/null || true
+    if [ ! -s "$REALITY_DEST_CERT" ] || [ ! -s "$REALITY_DEST_KEY" ]; then
+        if ! command -v openssl >/dev/null 2>&1; then
+            echo -e "  ${RED}✗ 启用本地 REALITY 落地需要 openssl，但未检测到${NC}"
+            return 1
+        fi
+        if openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+            -keyout "$REALITY_DEST_KEY" -out "$REALITY_DEST_CERT" \
+            -subj "/CN=${REALITY_SERVER_NAME}" >/dev/null 2>&1; then
+            chmod 600 "$REALITY_DEST_KEY" 2>/dev/null || true
+            echo -e "  ${GREEN}✓ 已生成本地 REALITY 落地自签证书 (CN=${REALITY_SERVER_NAME})${NC}"
+        else
+            echo -e "  ${RED}✗ 生成本地落地证书失败${NC}"
+            return 1
+        fi
+    fi
+    REALITY_DEST="127.0.0.1:${REALITY_DEST_LOCAL_PORT}"
+    export REALITY_DEST REALITY_DEST_LOCAL REALITY_DEST_LOCAL_PORT REALITY_DEST_CERT REALITY_DEST_KEY
+    return 0
+}
+
 generate_config() {
     echo -e "${GREEN}[步骤4] 生成 Xray 配置文件...${NC}"
     NODES_DATA=$(printf '%s\n' "${NODES[@]}")
+
+    # 启用本地 REALITY 落地时：生成自签证书并把 REALITY_DEST 指向本机
+    setup_local_reality_dest || return 1
 
     local NEW_CONFIG
     if ! NEW_CONFIG=$(create_config_workfile empty); then
@@ -1642,6 +1721,10 @@ generate_config() {
     SHORT_ID="$SHORT_ID" \
     REALITY_DEST="$REALITY_DEST" \
     REALITY_SERVER_NAME="$REALITY_SERVER_NAME" \
+    REALITY_DEST_LOCAL="${REALITY_DEST_LOCAL:-0}" \
+    REALITY_DEST_LOCAL_PORT="$REALITY_DEST_LOCAL_PORT" \
+    REALITY_DEST_CERT="$REALITY_DEST_CERT" \
+    REALITY_DEST_KEY="$REALITY_DEST_KEY" \
     XHTTP_MODE="$XHTTP_MODE" \
     XHTTP_PATH="$XHTTP_PATH" \
     NODES_DATA="$NODES_DATA" \
@@ -1724,6 +1807,30 @@ for idx, node in enumerate(raw_nodes, start=1):
         "streamSettings":{"sockopt":{"tcpFastOpen":True,"tcpNoDelay":True}}
     })
     rules.append({"type":"field","inboundTag":[tag_in],"outboundTag":tag_out})
+
+# 本地 REALITY 落地 inbound：仅监听 127.0.0.1，自签 TLS，复用 Xray 自身做回落目标，
+# 使未认证连接的回落流量留在本机、不烧外网带宽。serverNames/客户端链接均不受影响。
+if os.environ.get("REALITY_DEST_LOCAL", "0") == "1":
+    inbounds.append({
+        "tag": "reality-dest-local",
+        "listen": "127.0.0.1",
+        "port": int(os.environ.get("REALITY_DEST_LOCAL_PORT", "9443")),
+        "protocol": "vless",
+        # 占位 nil UUID：本入站只作回落 TLS 落地，不复用真实节点凭证
+        "settings": {"clients": [{"id": "00000000-0000-0000-0000-000000000000"}], "decryption": "none"},
+        "streamSettings": {
+            "network": "tcp",
+            "security": "tls",
+            "tlsSettings": {
+                "serverName": reality_server_name,
+                "minVersion": "1.3",
+                "certificates": [{
+                    "certificateFile": os.environ.get("REALITY_DEST_CERT", ""),
+                    "keyFile": os.environ.get("REALITY_DEST_KEY", "")
+                }]
+            }
+        }
+    })
 
 config = {
     "log":{"loglevel":"warning"},"stats":{},
@@ -2088,7 +2195,7 @@ import sys
 with open(os.environ["CONFIG_FILE"]) as f:
     config = json.load(f)
 
-has_business = any(inb.get("tag") != "api-in" for inb in config.get("inbounds", []))
+has_business = any(inb.get("tag") not in ("api-in", "reality-dest-local") for inb in config.get("inbounds", []))
 sys.exit(0 if has_business else 1)
 PYEOF
     then
@@ -2176,7 +2283,7 @@ for rule in config.get("routing", {}).get("rules", []):
 lines = []
 for inb in config.get("inbounds", []):
     tag = inb.get("tag", "")
-    if tag == "api-in":
+    if tag in ("api-in", "reality-dest-local"):
         continue
     port = inb.get("port")
     if not isinstance(port, int):
@@ -3277,7 +3384,7 @@ if os.path.exists(db_file):
 new_rows = []
 for inb in config.get("inbounds", []):
     tag = inb.get("tag", "")
-    if tag == "api-in" or not tag: continue
+    if tag in ("api-in", "reality-dest-local") or not tag: continue
     port = inb.get("port", 0)
     cur_up = get_stat(f"inbound>>>{tag}>>>traffic>>>uplink")
     cur_down = get_stat(f"inbound>>>{tag}>>>traffic>>>downlink")
@@ -3427,7 +3534,7 @@ print(f"  {'─'*20} {'─'*24} {'─'*10} {'─'*10} {'─'*10}")
 total_up=0; total_down=0
 for inb in config.get("inbounds",[]):
     tag = inb.get("tag","");
-    if tag == "api-in" or not tag: continue
+    if tag in ("api-in", "reality-dest-local") or not tag: continue
     port = inb.get("port","?"); dest = get_dest(tag)
     up = get_stat(f"inbound>>>{tag}>>>traffic>>>uplink")
     down = get_stat(f"inbound>>>{tag}>>>traffic>>>downlink")
@@ -3455,7 +3562,7 @@ else:
                    ("过去7天", now-7*86400), ("过去30天", now-30*86400)]
         current_nodes = {(inb.get("tag",""), inb.get("port")): (get_node_name(inb), get_dest(inb.get("tag","")))
                          for inb in config.get("inbounds",[])
-                         if inb.get("tag") and inb.get("tag") != "api-in"}
+                         if inb.get("tag") and inb.get("tag") not in ("api-in", "reality-dest-local")}
         tags = sorted({(r[1], r[2]) for r in records}, key=lambda x: (x[1], x[0]))
         for pn, since in periods:
             print(f"\n  ━━━ {pn} ━━━")
@@ -3503,7 +3610,7 @@ with open(os.environ["CONFIG_FILE"]) as f:
     config = json.load(f)
 display_idx = 0
 for inb in config["inbounds"]:
-    if inb.get("tag") == "api-in": continue
+    if inb.get("tag") in ("api-in", "reality-dest-local"): continue
     display_idx += 1
     tag = inb.get("tag","unknown"); port = inb.get("port","?")
     out_tag = None
@@ -3543,7 +3650,7 @@ except ValueError:
 
 with open(os.environ["CONFIG_FILE"]) as f:
     config = json.load(f)
-business = [inb for inb in config.get("inbounds", []) if inb.get("tag") != "api-in"]
+business = [inb for inb in config.get("inbounds", []) if inb.get("tag") not in ("api-in", "reality-dest-local")]
 if not (0 <= idx < len(business)):
     sys.exit(2)
 print(business[idx].get("port", ""))
@@ -3577,7 +3684,7 @@ new_port = int(os.environ["NEW_PORT"])
 
 with open(new_config) as f:
     config = json.load(f)
-business = [inb for inb in config["inbounds"] if inb.get("tag") != "api-in"]
+business = [inb for inb in config["inbounds"] if inb.get("tag") not in ("api-in", "reality-dest-local")]
 if not (0 <= idx < len(business)):
     print(f"编号无效（应在 1-{len(business)} 之间）"); sys.exit(2)
 
@@ -3680,7 +3787,7 @@ for rule in config.get("routing", {}).get("rules", []):
 
 i = 0
 for inb in config.get("inbounds", []):
-    if inb.get("tag") == "api-in":
+    if inb.get("tag") in ("api-in", "reality-dest-local"):
         continue
     i += 1
     tag = inb.get("tag", "unknown")
@@ -3718,7 +3825,7 @@ except ValueError:
 
 with open(os.environ["CONFIG_FILE"]) as f:
     config = json.load(f)
-business = [inb for inb in config.get("inbounds", []) if inb.get("tag") != "api-in"]
+business = [inb for inb in config.get("inbounds", []) if inb.get("tag") not in ("api-in", "reality-dest-local")]
 if not (0 <= idx < len(business)):
     sys.exit(2)
 print(business[idx].get("port", ""))
@@ -3748,7 +3855,7 @@ except ValueError:
 
 with open(new_config) as f:
     config = json.load(f)
-business = [inb for inb in config.get("inbounds", []) if inb.get("tag") != "api-in"]
+business = [inb for inb in config.get("inbounds", []) if inb.get("tag") not in ("api-in", "reality-dest-local")]
 if not (0 <= idx < len(business)):
     print(f"编号无效（应在 1-{len(business)} 之间）")
     sys.exit(2)
@@ -3812,7 +3919,7 @@ with open(os.environ["CONFIG_FILE"]) as f:
     config = json.load(f)
 i = 0
 for inb in config["inbounds"]:
-    if inb.get("tag") == "api-in": continue
+    if inb.get("tag") in ("api-in", "reality-dest-local"): continue
     i += 1
     tag = inb.get("tag","unknown"); port = inb.get("port","?")
     out_tag = None
@@ -3848,7 +3955,7 @@ except ValueError:
 
 with open(os.environ["CONFIG_FILE"]) as f:
     config = json.load(f)
-business = [inb for inb in config.get("inbounds", []) if inb.get("tag") != "api-in"]
+business = [inb for inb in config.get("inbounds", []) if inb.get("tag") not in ("api-in", "reality-dest-local")]
 if not (0 <= idx < len(business)):
     sys.exit(2)
 print(business[idx].get("port", ""))
@@ -3873,7 +3980,7 @@ except ValueError:
 
 with open(new_config) as f:
     config = json.load(f)
-business = [inb for inb in config["inbounds"] if inb.get("tag") != "api-in"]
+business = [inb for inb in config["inbounds"] if inb.get("tag") not in ("api-in", "reality-dest-local")]
 if not (0 <= idx < len(business)):
     print(f"编号无效（应在 1-{len(business)} 之间）"); sys.exit(2)
 
@@ -3942,7 +4049,7 @@ for rule in config.get("routing", {}).get("rules", []):
 
 i = 0
 for inb in config.get("inbounds", []):
-    if inb.get("tag") == "api-in":
+    if inb.get("tag") in ("api-in", "reality-dest-local"):
         continue
     i += 1
     tag = inb.get("tag", "unknown")
@@ -3987,7 +4094,7 @@ ports_file = os.environ["DELETE_PORTS_FILE"]
 with open(new_config) as f:
     config = json.load(f)
 
-business = [inb for inb in config.get("inbounds", []) if inb.get("tag") != "api-in"]
+business = [inb for inb in config.get("inbounds", []) if inb.get("tag") not in ("api-in", "reality-dest-local")]
 if not business:
     print("暂无可删除节点")
     sys.exit(2)
@@ -4334,7 +4441,7 @@ with open(os.environ["CONFIG_FILE"]) as f:
 
 seen = set()
 for inb in config.get("inbounds", []):
-    if inb.get("tag") == "api-in":
+    if inb.get("tag") in ("api-in", "reality-dest-local"):
         continue
     try:
         port = int(inb.get("port"))
@@ -4370,7 +4477,7 @@ uninstall() {
         rm -f "$CONFIG_FILE" "$INFO_FILE" "$SUB_FILE" "$PUBLIC_KEY_CACHE_FILE" "$SYSCTL_FILE" /root/.xray_traffic_db /root/.xray_traffic_record.sh \
               /root/.xray_traffic_record.lock \
               /root/.xray_monitor.conf /root/.xray_monitor.sh /root/.xray_vps_ip /root/.msmtprc \
-              "$XRAY_GUARD_BLOCKLIST_FILE" \
+              "$XRAY_GUARD_BLOCKLIST_FILE" "$REALITY_DEST_CERT" "$REALITY_DEST_KEY" \
               /tmp/.xray_node_failures /tmp/.xray_alert_lock_*
         # 配置备份保留，让用户决定是否清理
         echo -e "${YELLOW}注意：配置备份 ${CONFIG_FILE}.bak.* 已保留，如需清理请手动删除${NC}"
