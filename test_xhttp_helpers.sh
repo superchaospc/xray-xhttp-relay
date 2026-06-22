@@ -62,8 +62,17 @@ if [[ "$link" != *"@[2001:db8::1]:"* ]]; then
 fi
 
 # ---- 遗留字段检测 ----
-if grep -nE 'type=tcp|xtls-rprx-vision|"network"[[:space:]]*:[[:space:]]*"tcp"' "$ROOT/xray_deploy.sh" \
-    | grep -vE '^[0-9]+:[[:space:]]*#'; then
+# 业务 VLESS 入站一律 XHTTP；reality-dest-local 是仅监听本机的自签 TLS 落地，
+# 合法使用 network=tcp + tls，需豁免（但仍严查 type=tcp / Vision flow / 其它 tcp 传输）。
+if awk '
+    /^[[:space:]]*#/ { next }
+    /reality-dest-local/ { allow = NR + 15 }
+    /type=tcp|xtls-rprx-vision/ { print NR": "$0; bad = 1 }
+    /"network"[[:space:]]*:[[:space:]]*"tcp"/ { if (NR > allow) { print NR": "$0; bad = 1 } }
+    END { exit bad ? 1 : 0 }
+' "$ROOT/xray_deploy.sh"; then
+    :
+else
     echo "xray_deploy.sh 中存在遗留 VLESS TCP/Vision 字段"
     exit 1
 fi
