@@ -64,8 +64,13 @@ fi
 # ---- 遗留字段检测 ----
 # 业务 VLESS 入站一律 XHTTP；reality-dest-local 是仅监听本机的自签 TLS 落地，
 # 合法使用 network=tcp + tls，需豁免（但仍严查 type=tcp / Vision flow / 其它 tcp 传输）。
+# check_protocol_mismatch 是「协议混用提示」函数，需引用 xtls-rprx-vision 来识别误入的
+# Vision 线路，属合法引用而非遗留配置生成，整段（至其 PYEOF）豁免。
 if awk '
     /^[[:space:]]*#/ { next }
+    /check_protocol_mismatch\(\) \{/ { inblk = 1 }
+    inblk && /^PYEOF$/ { inblk = 0; next }
+    inblk { next }
     /reality-dest-local/ { allow = NR + 15 }
     /type=tcp|xtls-rprx-vision/ { print NR": "$0; bad = 1 }
     /"network"[[:space:]]*:[[:space:]]*"tcp"/ { if (NR > allow) { print NR": "$0; bad = 1 } }
