@@ -51,6 +51,16 @@ VPS 上一键部署 **Xray VLESS + XHTTP + REALITY** 的 Bash 脚本。每个节
 
 ---
 
+## 🆕 v1.0.5 协议混用提示
+
+本脚本是 **XHTTP (network: xhttp)** 版。如果同一台机器先后被本脚本和 [Vision 版脚本](https://github.com/superchaospc/xray-relay) 都操作过,配置里就会混入 `flow: xtls-rprx-vision` 的 Vision 线路——而本脚本的链接/订阅生成只会按 XHTTP 格式输出 `type=xhttp`,导致那些 Vision 线路的分享链接错误、客户端连不上。
+
+这个版本在启动预检里新增 `check_protocol_mismatch`:进菜单前扫描 `config.json`,发现 Vision (xtls-rprx-vision) 线路就打印红字警告并点名端口/备注,提示改用 Vision 版脚本管理它们或删除。**仅警告,不读 stdin、不阻断**,非交互喂菜单号的用法完全不受影响;配置缺失或解析失败时静默跳过。
+
+> 反向的对称提示(Vision 版检测到 xhttp 线路时警告)见 xray-relay v2.2.23。
+
+---
+
 ## 🆕 v1.0.4 本地 REALITY 落地根治（`REALITY_DEST_LOCAL`）
 
 v1.0.3 的限速 guard 能**封顶**回落滥用，但回落本身仍会被转发到外网 dest。本版本提供**根治开关**：把 REALITY 的回落目标改到本机，未认证连接的回落流量从此留在本地、**零外网带宽**——而且复用 Xray 自身、**零新增依赖**。
