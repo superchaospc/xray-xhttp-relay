@@ -62,6 +62,24 @@ RULES_NOPORT=$(build_reality_guard_ruleset "" "9.9.9.9" "")
 check "仍写入黑名单元素" "$RULES_NOPORT" "9.9.9.9"
 check_absent "无端口时不产生 tcp dport 规则" "$RULES_NOPORT" "tcp dport"
 
+echo "=== build_reality_guard_ruleset（空黑名单：v1.0.6 回归）==="
+# 空黑名单是全新安装的常态；曾因 set 行 ${:+ ... { } } 嵌套花括号被 bash 截断而多吐
+# 一个 }，导致 nft 语法错、guard 静默跳过。这里断言 set 行闭合正确、无 `} }`。
+RULES_EMPTY=$(build_reality_guard_ruleset "443,8452" "" "")
+check "空黑名单 v4 set 行单括号闭合" "$RULES_EMPTY" "set blocklist4 { type ipv4_addr; flags interval; }"
+check "空黑名单 v6 set 行单括号闭合" "$RULES_EMPTY" "set blocklist6 { type ipv6_addr; flags interval; }"
+check_absent "空黑名单不产生多余的 } }（v4）" "$RULES_EMPTY" "flags interval; } }"
+check "空黑名单仍生成端口限速规则" "$RULES_EMPTY" "limit rate over 50/second burst 100 packets"
+if command -v nft >/dev/null 2>&1; then
+    if printf '%s\n' "$RULES_EMPTY" | nft -c -f - >/dev/null 2>&1; then
+        echo "  ✓ 空黑名单 nft -c 校验通过"
+    else
+        echo "  ✗ 空黑名单 nft -c 校验失败"
+        printf '%s\n' "$RULES_EMPTY" | nft -c -f - 2>&1 | sed 's/^/      /'
+        FAIL=1
+    fi
+fi
+
 echo "=== nft 语法校验（无 nft 则跳过）==="
 if command -v nft >/dev/null 2>&1; then
     if printf '%s\n' "$RULES" | nft -c -f - >/dev/null 2>&1; then

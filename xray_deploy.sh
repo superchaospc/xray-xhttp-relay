@@ -4,6 +4,14 @@
 #  By Wayne Shen
 #  Derived from superchaospc/xray-relay (MIT License)
 #
+#  v1.0.6 修复（回落 guard 空黑名单 bug）：
+#    - build_reality_guard_ruleset 生成的 set 行原用 ${block4:+ elements = { ... } }，
+#      把字面花括号嵌进 ${:+}；部分 bash 不对其做配对、在首个 } 处截断，导致空黑名单
+#      （全新安装的常态）时多吐一个 }，nft 语法错 → apply_reality_guard 打印“规则校验
+#      失败，跳过”，结果新装机器根本没启用回落防护。改为先把 elements 子句拼进独立变量
+#      el4/el6 再插入，空值即为空串，跨 bash 版本稳定。
+#    - test_reality_guard.sh 增加空黑名单回归用例（断言无 `} }` 且 nft -c 通过）。
+#
 #  v1.0.5 新增（协议混用提示）：
 #    - 启动预检新增 check_protocol_mismatch：本脚本是 XHTTP (network: xhttp) 版，
 #      若 config 中混入 Vision (tcp+xtls-rprx-vision) 线路（多为误用 Vision 版脚本
@@ -247,7 +255,7 @@ _QRENCODE_CHECKED=""
 print_banner() {
     echo -e "${CYAN}"
     echo "╔═══════════════════════════════════════════════╗"
-    echo "║   Xray XHTTP Reality 中转部署工具 v1.0.5     ║"
+    echo "║   Xray XHTTP Reality 中转部署工具 v1.0.6     ║"
     echo "║   多节点 · 一键部署 · 配置自动回滚           ║"
     echo "╚═══════════════════════════════════════════════╝"
     echo -e "${NC}"
@@ -1991,6 +1999,12 @@ build_reality_guard_ruleset() {
     local conn_max="${XRAY_GUARD_CONN_MAX:-600}"
     local rate="${XRAY_GUARD_RATE:-50}"
     local burst="${XRAY_GUARD_BURST:-100}"
+    # elements 子句单独拼装，避免把 `{ ... }` 塞进 ${var:+...}：部分 bash 不对
+    # ${:+} 内的字面花括号做配对，空黑名单时会多吐一个 }，导致 nft 语法错、guard
+    # 静默跳过（全新安装黑名单为空即触发）。见 test_reality_guard.sh 空黑名单用例。
+    local el4="" el6=""
+    [ -n "$block4" ] && el4=" elements = { ${block4} }"
+    [ -n "$block6" ] && el6=" elements = { ${block6} }"
     local nftports="" port_rules=""
     if [ -n "$ports_csv" ]; then
         nftports="${ports_csv//,/, }"
@@ -2008,8 +2022,8 @@ EOF
 add table inet ${table}
 delete table inet ${table}
 table inet ${table} {
-    set blocklist4 { type ipv4_addr; flags interval;${block4:+ elements = { ${block4} } } }
-    set blocklist6 { type ipv6_addr; flags interval;${block6:+ elements = { ${block6} } } }
+    set blocklist4 { type ipv4_addr; flags interval;${el4} }
+    set blocklist6 { type ipv6_addr; flags interval;${el6} }
     chain input {
         type filter hook input priority -10; policy accept;
         ip saddr @blocklist4 drop
