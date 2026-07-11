@@ -51,6 +51,23 @@ VPS 上一键部署 **Xray VLESS + XHTTP + REALITY** 的 Bash 脚本。每个节
 
 ---
 
+## 🆕 v1.0.7 修复：本地落地证书权限导致启动回滚
+
+**影响 `REALITY_DEST_LOCAL=1`（本地落地根治）的用户。** v1.0.4–v1.0.6 生成的本地落地自签证书 `/usr/local/etc/xray/reality-dest.{crt,key}` 是 openssl 默认的 `600 root:root`,而 Xray 服务以 `nobody:nogroup` 运行 → 内置 inbound `reality-dest-local` 启动时报 `open reality-dest.crt: permission denied` → **步骤 7 启动失败并自动回滚**,`config.json` 被覆盖回空的 stock 配置,刚建好的节点/密钥丢失。
+
+坑点在于:root 手动 `xray -test -config ...` 反而显示 `Configuration OK`(root 能读证书),极具迷惑性。`config.json` 早在 `apply_config_permissions` 里处理过同一类权限坑(强制 `root:<服务组> 640`),证书却漏了。
+
+本版本把证书/私钥统一按 `config.json` 的策略处理:
+
+- `chown root:<detect_xray_service_group>`(即 `nogroup`/`nobody`)+ `chmod 640`,让 Xray 服务用户可读;
+- 从证书生成的 `if` 块中**移出**、每次运行都无条件执行 → 顺带修好老版本(≤v1.0.6)遗留的坏权限证书,受影响的机器**重跑一次脚本(菜单 1/加节点/菜单 17 等任意会重写 config 的操作)即可自愈**,无需手动 `chown`。
+
+`test_local_dest.sh` 增加回归断言:证书生成后对 `crt`/`key` 执行了服务组 `chown` + `chmod 640`,且脚本内不再残留 `600 root:root` 证书写法。
+
+> 该 bug 仅存在于本 XHTTP 版(独有 `REALITY_DEST_LOCAL` 脚本化落地);Vision 版 [xray-relay](https://github.com/superchaospc/xray-relay) 未脚本化本地落地(仅文档手动配方),不受影响。
+
+---
+
 ## 🆕 v1.0.5 协议混用提示
 
 本脚本是 **XHTTP (network: xhttp)** 版。如果同一台机器先后被本脚本和 [Vision 版脚本](https://github.com/superchaospc/xray-relay) 都操作过,配置里就会混入 `flow: xtls-rprx-vision` 的 Vision 线路——而本脚本的链接/订阅生成只会按 XHTTP 格式输出 `type=xhttp`,导致那些 Vision 线路的分享链接错误、客户端连不上。

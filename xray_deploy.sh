@@ -4,6 +4,18 @@
 #  By Wayne Shen
 #  Derived from superchaospc/xray-relay (MIT License)
 #
+#  v1.0.7 修复（本地落地证书权限，nobody 读不了导致启动回滚）：
+#    - setup_local_reality_dest 生成的自签证书/私钥原为 openssl 默认的 600 root:root，
+#      而 xray 服务用户是 nobody:nogroup → reality-dest-local inbound 启动时
+#      "open reality-dest.crt: permission denied" → 步骤7启动失败并自动回滚，config
+#      被覆盖回空 stock、节点/密钥丢失（root 手动跑 xray -test 反而 OK，极具迷惑性）。
+#      config.json 早有 apply_config_permissions 处理此坑，证书却漏了。
+#    - 改为无条件 chown root:<detect_xray_service_group> + chmod 640 证书与私钥（与
+#      config.json 同策略），且移出证书生成 if 块，每次运行都强制执行 → 顺带修好
+#      老版本(≤v1.0.6)遗留的坏权限证书，重跑即恢复，无需手动 chown。
+#    - test_local_dest.sh 增加回归用例（断言 setup_local_reality_dest 对 crt/key
+#      chown 服务组 + chmod 640，且脚本内不再出现 600 root:root 证书）。
+#
 #  v1.0.6 修复（回落 guard 空黑名单 bug）：
 #    - build_reality_guard_ruleset 生成的 set 行原用 ${block4:+ elements = { ... } }，
 #      把字面花括号嵌进 ${:+}；部分 bash 不对其做配对、在首个 } 处截断，导致空黑名单
@@ -255,7 +267,7 @@ _QRENCODE_CHECKED=""
 print_banner() {
     echo -e "${CYAN}"
     echo "╔═══════════════════════════════════════════════╗"
-    echo "║   Xray XHTTP Reality 中转部署工具 v1.0.6     ║"
+    echo "║   Xray XHTTP Reality 中转部署工具 v1.0.7     ║"
     echo "║   多节点 · 一键部署 · 配置自动回滚           ║"
     echo "╚═══════════════════════════════════════════════╝"
     echo -e "${NC}"
@@ -1706,13 +1718,20 @@ setup_local_reality_dest() {
         if openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
             -keyout "$REALITY_DEST_KEY" -out "$REALITY_DEST_CERT" \
             -subj "/CN=${REALITY_SERVER_NAME}" >/dev/null 2>&1; then
-            chmod 600 "$REALITY_DEST_KEY" 2>/dev/null || true
             echo -e "  ${GREEN}✓ 已生成本地 REALITY 落地自签证书 (CN=${REALITY_SERVER_NAME})${NC}"
         else
             echo -e "  ${RED}✗ 生成本地落地证书失败${NC}"
             return 1
         fi
     fi
+    # 证书/私钥必须让 xray 服务用户(nobody/nogroup)可读，否则 reality-dest-local
+    # inbound 启动时 open cert permission denied → 启动失败并回滚。与 config.json
+    # 同策略（见 apply_config_permissions）：root:<xray服务用户主组> 640，不能沿用
+    # openssl 默认的 600 root:root。无条件执行，顺带修好老版本(≤v1.0.6)遗留的坏权限证书。
+    local dest_group
+    dest_group=$(detect_xray_service_group)
+    chown "root:${dest_group}" "$REALITY_DEST_KEY" "$REALITY_DEST_CERT" 2>/dev/null || true
+    chmod 640 "$REALITY_DEST_KEY" "$REALITY_DEST_CERT" 2>/dev/null || true
     REALITY_DEST="127.0.0.1:${REALITY_DEST_LOCAL_PORT}"
     export REALITY_DEST REALITY_DEST_LOCAL REALITY_DEST_LOCAL_PORT REALITY_DEST_CERT REALITY_DEST_KEY
     return 0
