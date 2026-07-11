@@ -99,4 +99,18 @@ echo "$OUT" | grep -qE "^UUID='?REAL-UUID'?$"               || { echo "✗ UUID 
 echo "$OUT" | grep -qE "^REALITY_DEST='?127.0.0.1:9443'?$"  || { echo "✗ 未从 config 读出本地 dest: $OUT"; exit 1; }
 echo "load_node_identity 跳过本地落地并取真实节点 ok"
 
+# ---- v1.0.7 回归：本地落地证书/私钥必须让 xray 服务用户 (nobody:nogroup) 可读 ----
+# 老版本用 openssl 默认的 600 root:root → reality-dest-local 启动 permission denied → 回滚。
+DEST_FN=$(awk '/^setup_local_reality_dest\(\) \{/{f=1} f{print} f&&/^\}/{exit}' "$ROOT/xray_deploy.sh")
+echo "$DEST_FN" | grep -qE 'detect_xray_service_group' \
+    || { echo "✗ setup_local_reality_dest 未复用 detect_xray_service_group"; exit 1; }
+echo "$DEST_FN" | grep -qE 'chown "root:\$\{dest_group\}" "\$REALITY_DEST_KEY" "\$REALITY_DEST_CERT"' \
+    || { echo "✗ setup_local_reality_dest 未对证书/私钥 chown 到服务组"; exit 1; }
+echo "$DEST_FN" | grep -qE 'chmod 640 "\$REALITY_DEST_KEY" "\$REALITY_DEST_CERT"' \
+    || { echo "✗ setup_local_reality_dest 未对证书/私钥 chmod 640"; exit 1; }
+if echo "$DEST_FN" | grep -qE 'chmod 600 "\$REALITY_DEST_(KEY|CERT)"'; then
+    echo "✗ 证书/私钥仍用 chmod 600（xray nobody 读不了，会启动回滚）"; exit 1
+fi
+echo "本地落地证书权限 (root:服务组 640) 回归 ok"
+
 echo "local dest ok"
