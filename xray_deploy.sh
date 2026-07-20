@@ -4,6 +4,15 @@
 #  By Wayne Shen
 #  Derived from superchaospc/xray-relay (MIT License)
 #
+#  v1.0.8 修复（重启前权限自愈，含本地落地证书）：
+#    - restart_with_rollback 在重启前无条件把 config.json（及启用本地落地时的自签
+#      证书/私钥）归一化为 root:<xray 服务用户主组> 640（自动探测服务组，不写死
+#      nogroup），修复老版本部署 / 外部改动遗留的 root:root 坏权限。内容正常、仅权限
+#      坏时，“仅重启”这条最常见路径原本不自愈 → open ...: permission denied、起不来。
+#    - 交互菜单「9) 重启」改走 restart_with_rollback（自愈 + 失败回滚兜底），不再裸重启。
+#    - 监控自动重启脚本在自动拉起前先归一化 config.json 与本地落地证书属组。
+#    - 新增 test_restart_selfheal_permissions.sh
+#
 #  v1.0.7 修复（本地落地证书权限，nobody 读不了导致启动回滚）：
 #    - setup_local_reality_dest 生成的自签证书/私钥原为 openssl 默认的 600 root:root，
 #      而 xray 服务用户是 nobody:nogroup → reality-dest-local inbound 启动时
@@ -713,6 +722,16 @@ create_config_workfile() {
 
 # 重启 xray 并在失败时回滚到最近备份
 restart_with_rollback() {
+    # 自愈：重启前把 config.json（及启用了本地落地时的自签证书）归一化到 xray 服务
+    # 用户可读，修复老版本部署 / 外部改动遗留的 root:root 坏权限，避免“仅重启”这条
+    # 最常见路径因权限坏而起不来（config 内容明明没问题）。
+    apply_config_permissions "$CONFIG_FILE" 2>/dev/null || true
+    if [ -s "${REALITY_DEST_CERT:-/nonexistent}" ] && [ -s "${REALITY_DEST_KEY:-/nonexistent}" ]; then
+        local _dest_group
+        _dest_group=$(detect_xray_service_group)
+        chown "root:${_dest_group}" "$REALITY_DEST_KEY" "$REALITY_DEST_CERT" 2>/dev/null || true
+        chmod 640 "$REALITY_DEST_KEY" "$REALITY_DEST_CERT" 2>/dev/null || true
+    fi
     systemctl restart xray || true
     sleep 3
     if systemctl is-active --quiet xray; then
@@ -4891,6 +4910,15 @@ if ! systemctl is-active --quiet xray; then
 [故障] Xray 进程已停止"
     log "ERROR: Xray not running"
     if [ "$AUTO_RESTART" = "yes" ]; then
+        # 自愈：重启前修正 config.json（及本地落地自签证书）属组，避免坏权限(root:root)
+        # 导致重启后 nobody 读不了、仍无法启动
+        _svc_grp=$(systemctl show -p User --value xray 2>/dev/null | head -n1)
+        _svc_grp=$(id -gn "${_svc_grp:-nobody}" 2>/dev/null || echo nogroup)
+        chown "root:${_svc_grp}" "$CONFIG_FILE" 2>/dev/null || chown root:nogroup "$CONFIG_FILE" 2>/dev/null || true
+        chmod 640 "$CONFIG_FILE" 2>/dev/null || true
+        for _f in /usr/local/etc/xray/reality-dest.crt /usr/local/etc/xray/reality-dest.key; do
+            [ -e "$_f" ] && { chown "root:${_svc_grp}" "$_f" 2>/dev/null || true; chmod 640 "$_f" 2>/dev/null || true; }
+        done
         systemctl restart xray; sleep 3
         if systemctl is-active --quiet xray; then
             DETAILS="${DETAILS}
@@ -5161,7 +5189,7 @@ main_menu() {
         6)  show_traffic;;
         7)  troubleshoot;;
         8)  update_xray;;
-        9)  systemctl restart xray; echo -e "${GREEN}已重启${NC}"; systemctl status xray --no-pager;;
+        9)  if restart_with_rollback; then echo -e "${GREEN}已重启${NC}"; fi; systemctl status xray --no-pager;;
         10) monitor_menu;;
         11) uninstall;;
         12) add_direct_node;;

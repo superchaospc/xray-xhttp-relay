@@ -54,6 +54,7 @@ run "test_diagnostic_journal_window.sh (诊断日志时间窗口)" bash test_dia
 run "test_diagnostic_error_filter.sh (诊断错误日志过滤防误报)" bash test_diagnostic_error_filter.sh
 run "test_atomic_config.sh (配置原子写入)" bash test_atomic_config.sh
 run "test_restart_rollback_permissions.sh (回滚权限恢复)" bash test_restart_rollback_permissions.sh
+run "test_restart_selfheal_permissions.sh (重启前权限自愈)" bash test_restart_selfheal_permissions.sh
 run "test_info_parse.sh (INFO_FILE 解析)" bash test_info_parse.sh
 run "test_subscription_file.sh (订阅文件生成)" bash test_subscription_file.sh
 run "test_smtp_validate.sh (SMTP 输入校验)" bash test_smtp_validate.sh
