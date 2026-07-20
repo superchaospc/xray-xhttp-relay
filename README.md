@@ -51,6 +51,21 @@ VPS 上一键部署 **Xray VLESS + XHTTP + REALITY** 的 Bash 脚本。每个节
 
 ---
 
+## 🆕 v1.0.8 重启前权限自愈（config 与本地落地证书）
+
+内容正常、只是 `config.json`（或本地落地自签证书）属组坏了（`root:root`，多为老版本部署或外部改动遗留）的机器，**只靠一次重启就起不来**——Xray 服务以非 root 用户运行，读不到 `640` 的文件，报 `open ...: permission denied`。三条重启路径里原本只有「重启失败后回滚」那条会修权限，而最常见的「手动重启 / 监控自动拉起」走的是裸 `systemctl restart xray`，不会自愈。
+
+v1.0.7 已保证**生成**证书时权限正确，本版本进一步保证**每次重启前**也归一化，兜住老机器 / 外部改动的存量坏权限：
+
+- `restart_with_rollback` 重启前无条件把 `config.json`（及启用本地落地时的 `reality-dest.{crt,key}`）归一化为 `root:<xray 服务用户主组> 640`（自动探测服务组，不写死 `nogroup`）。
+- 交互菜单 **9) 重启** 改走 `restart_with_rollback`（自愈 + 失败回滚兜底），不再裸重启。
+- 监控自动重启脚本在自动拉起前先修正 `config.json` 与本地落地证书属组。
+- 新增 `test_restart_selfheal_permissions.sh`：坏权限（600）的健康 config/证书仅一次重启即自愈为 640、不触发回滚。
+
+> 受影响的机器**重跑一次脚本或做任意一次重启操作即可自愈**，无需手动 `chown`。
+
+---
+
 ## 🆕 v1.0.7 修复：本地落地证书权限导致启动回滚
 
 **影响 `REALITY_DEST_LOCAL=1`（本地落地根治）的用户。** v1.0.4–v1.0.6 生成的本地落地自签证书 `/usr/local/etc/xray/reality-dest.{crt,key}` 是 openssl 默认的 `600 root:root`,而 Xray 服务以 `nobody:nogroup` 运行 → 内置 inbound `reality-dest-local` 启动时报 `open reality-dest.crt: permission denied` → **步骤 7 启动失败并自动回滚**,`config.json` 被覆盖回空的 stock 配置,刚建好的节点/密钥丢失。
